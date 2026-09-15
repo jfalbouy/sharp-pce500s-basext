@@ -1,0 +1,497 @@
+000000                   	; ============================================================================
+000000                   	; LPEEK.ASM -- ajoute la FONCTION BASIC  LPEEK <adresse>
+000000                   	; ============================================================================
+000000                   	;
+000000                   	; ⛔ LE NOM NE POUVAIT PAS ETRE "PEEKX", ET L'ESSAI MACHINE L'A MONTRE.
+000000                   	;    Le tokeniseur consulte la table de la ROM AVANT la notre. "PEEKX" y est
+000000                   	;    donc coupe en PEEK + la variable X, et la ligne devient une erreur de
+000000                   	;    syntaxe -- relue ensuite, elle s'affiche litteralement
+000000                   	;    "PRINT HEX$ PEEK X &BF100".
+000000                   	;
+000000                   	;    LA REGLE, valable pour toute extension : un mot-cle ajoute ne doit pas
+000000                   	;    COMMENCER par un mot-cle existant, ni etre le debut de l'un d'eux. Cela se
+000000                   	;    verifie avant d'ecrire une ligne de code, sur les 168 noms de
+000000                   	;    Data/BasicTokens.csv. LPEEK est libre dans les deux sens.
+000000                   	;
+000000                   	;   LPEEK &BF0B8   rend la valeur de l'adresse 3 octets rangee en &BF0B8,
+000000                   	;                  soit l'equivalent de
+000000                   	;                  PEEK &BF0B8 + PEEK &BF0B9 * 256 + PEEK &BF0BA * 65536
+000000                   	;
+000000                   	; Ce n'est pas un CALL : c'est une INSTRUCTION DU LANGAGE, utilisable dans une
+000000                   	; expression -- PRINT LPEEK &BF0B8, A = LPEEK X + 1, etc.
+000000                   	;
+000000                   	;   LOAD M "S1:LPEEK.OBJ" : CALL &BF000      installe
+000000                   	;   PRINT HEX$ LPEEK &BF0B8
+000000                   	;
+000000                   	; ---------------------------------------------------------------------------
+000000                   	; COMMENT L'INTERPRETEUR NOUS TROUVE  (tout est lu dans la ROM)
+000000                   	; ---------------------------------------------------------------------------
+000000                   	;
+000000                   	; Deux crochets dans la zone de travail du BASIC, x = (baswrk) = (0D1h) :
+000000                   	;
+000000                   	;   [x+090h]   la table de mots-cles      (texte -> token)
+000000                   	;   [x+093h]   la table de repartition    (token -> routine)
+000000                   	;
+000000                   	; La ROM y met 0FFFFFh au demarrage (SUB_F93C3) : la sentinelle "rien".
+000000                   	;
+000000                   	; La repartition se balaie par SUB_F593D (0F593Dh) : entrees de QUATRE octets,
+000000                   	; token puis adresse, arret sur un token 000h.
+000000                   	;
+000000                   	; ⛔ ET LE QUARTET HAUT DU 3e OCTET D'ADRESSE EST UN DRAPEAU. Les deux
+000000                   	;    resolveurs de la ROM sont cote a cote et ne different que par le bit :
+000000                   	;
+000000                   	;      0F58E5h  instruction : test a,080h -> routine = l'adresse telle quelle
+000000                   	;      0F590Bh  FONCTION    : test a,040h -> routine = l'adresse + 3
+000000                   	;
+000000                   	;    PEEKX etant une fonction, on range donc (routine - 3) avec le bit 6 arme.
+000000                   	;    Les trois octets sautes n'ont aucun sens : dans la ROM, ce sont ceux de la
+000000                   	;    routine precedente. On y met trois zeros.
+000000                   	;
+000000                   	; ---------------------------------------------------------------------------
+000000                   	; LE CORPS -- calque sur BAS_PEEK (0F9F44h), avec les entrees LOINTAINES
+000000                   	; ---------------------------------------------------------------------------
+000000                   	;
+000000                   	; Une extension vit en page 0B, les services en 0E et 0F. Un service termine
+000000                   	; par RET ne se laisse PAS appeler d'ici : son retour depile 2 octets et reste
+000000                   	; dans SA page. Il faut donc, pour chaque service, l'entree qui finit par RETF.
+000000                   	;
+000000                   	;   BAS_PEEK fait            ici on fait              parce que
+000000                   	;   -----------------------  -----------------------  ------------------------
+000000                   	;   call SUB_F5F9C           callf 0EFBF3h            F5F9C finit par RET ;
+000000                   	;                            puis callf 0EFAD4h       EFBF3 et EFAD4 par RETF.
+000000                   	;                                                     F5F9C n'etait que
+000000                   	;                                                     "callf EFBF3 + call
+000000                   	;                                                     F5C9A", et F5C9A n'etait
+000000                   	;                                                     que "callf EFAD4 + mv y".
+000000                   	;   callf SUB_EFB6F          callf 0EFB6Fh            deja lointaine
+000000                   	;
+000000                   	; 0EFAD4h et 0EFB6Fh sont les commandes 07Eh et 07Fh du device 9 -- dec2bin et
+000000                   	; bin2dec. Le travail sur la bibliotheque mathematique sert directement ici.
+000000                   	;
+000000                   	; ⛔ LE CADRE BP -- ET J'AI D'ABORD MAL LU SUB_F5C9A.
+000000                   	;
+000000                   	;    Elle se termine par "jr LOC_F5C6F", que je n'avais pas suivi. Or LOC_F5C6F
+000000                   	;    fait "pmdf (bp_ram),00Fh" : BP + 15. Le compte, entree a sortie :
+000000                   	;
+000000                   	;      entree                          BP = B
+000000                   	;      callf chknum                    BP = B-15   <- le cadre de la valeur
+000000                   	;      SUB_F5C9A finit par +15         BP = B
+000000                   	;      BAS_PEEK fait -15               BP = B-15   <- ou il ecrit son resultat
+000000                   	;
+000000                   	;    Ici on n'appelle pas F5C9A, donc on n'a PAS le +15 : apres chknum, BP vaut
+000000                   	;    deja B-15, c'est-a-dire exactement le bon cadre. Il ne faut donc AUCUN
+000000                   	;    pmdf sur le chemin de succes. La premiere version gardait le -15 de
+000000                   	;    BAS_PEEK sans son +15 : elle ecrivait en B-30.
+000000                   	;
+000000                   	;    Sur le chemin d'ERREUR, en revanche, il faut le +15 : F5C9A le fait dans
+000000                   	;    tous les cas, y compris son erreur 33 (LOC_F5C74 saute a LOC_F5C6F).
+000000                   	;
+000000                   	; ⛔ ET ON ECRIT (BP+n), PAS (000H). Sous pre_on, "(000H)" designe l'adresse
+000000                   	;    DIRECTE 0 ; le mode (BP+n) est celui qui n'emet PAS d'octet PRE. Le
+000000                   	;    controle se fait dans l'OBJET : sur ces lignes, BAS_PEEK ne porte aucun
+000000                   	;    PRE (E0 05 01, CC 00 00, CD 02 00 00). Une premiere version de ce fichier
+000000                   	;    portait "30 80 00" -- un PRE, donc l'adresse directe : la fonction lisait
+000000                   	;    la RAM interne 0 au lieu du cadre de l'argument.
+000000                   	;
+000000                   	;       xasm2026-4 LPEEK.ASM -O -L -S -B -K
+000000                   	; ============================================================================
+000000                   	
+000000                   	        include pce500.inc
+000000                   	basptr: equ 0D1H ; POINTEUR (3 octets) vers la zone de travail de l'interpreteur BASIC. A NE PAS CONFONDRE avec baswrk = 0BFD0Eh, qui est la zone elle-meme : ce nom-la vient du listing de E. Kako (register.lst, 1990) et sert de verite terrain. Les crochets d'extension du BASIC sont en [(basptr)+090h] et [(basptr)+093h]
+000000                   	
+000000                   	; --- les entrees LOINTAINES de la ROM (toutes terminees par RETF) -----------
+000000                   	chknum:   equ   0EFBF3H    ; evalue l'expression numerique, verifie le type
+000000                   	dec2bin:  equ   0EFAD4H    ; le nombre -> entier 24 bits en (bp+1)..(bp+3)
+000000                   	bin2dec:  equ   0EFB6FH    ; l'entier de (bp+0)..(bp+3) -> nombre BASIC
+000000                   	
+000000                   	token:    equ   007H       ; libre dans la table de la ROM (BASCOM occupe 04-06)
+000000                   	
+000000                   	; ⛔ NE PAS ECRIRE « baswrk » ICI. C'est la ZONE de travail, en memoire EXTERNE
+000000                   	;    (0BFD0Eh) -- nom repris du listing de E. Kako, ou il est declare
+000000                   	;    « baswrk: equ 0bfd0eh ». Le pointeur qu'il nous faut est en RAM INTERNE, a
+000000                   	;    0D1h, que le carnet nommait « baswrk » lui aussi jusqu'au 2026-09-03 et
+000000                   	;    nomme desormais « basptr ». Depuis, pce500.inc EXPOSE les deux et le
+000000                   	;    generateur REFUSE une collision de noms : il n'y a plus d'equ local ici.
+000000                   	;    Et « mv x,(baswrk) » ne proteste pas : l'operande interne fait 8 bits, XASM
+000000                   	;    TRONQUE 0BFD0Eh en 0Eh. Le code ecrivait donc les crochets en
+000000                   	;    [(00Eh)+090h], et la table d'extension n'a jamais ete installee.
+000000                   	;    Verifiable dans l'objet : on doit lire « 30 84 D1 », pas « 30 84 0E ».
+000000                   	err_syn:  equ   00AH       ; erreur BASIC 10, Syntax error
+000000                   	
+0BF000                   	        org     0BF000H
+0BF000                   	        pre_on
+0BF000                   	
+0BF000                   	; ============================================================================
+0BF000                   	; L'INSTALLATION -- c'est ici que mene CALL &BF000
+0BF000                   	; ============================================================================
+0BF000                   	start:
+0BF000 2C                	        pushu   x               ; X porte le point de reprise de l'interpreteur
+0BF001 2B                	        pushu   i
+0BF002 30 84 D1          	        mv      x,(basptr)
+0BF005 95 84 90          	        mv      y,[x+090H]      ; l'ancienne table de mots-cles
+0BF008 AD 37 F0 0B       	        mv      [old_kw],y      ;   sauvee : de quoi desinstaller
+0BF00C 95 84 93          	        mv      y,[x+093H]      ; l'ancienne table de repartition
+0BF00F AD 3A F0 0B       	        mv      [old_disp],y
+0BF013 0D 2A F0 0B       	        mv      y,kw_table
+0BF017 B5 84 90          	        mv      [x+090H],y
+0BF01A 0D 32 F0 0B       	        mv      y,disp_table
+0BF01E B5 84 93          	        mv      [x+093H],y
+0BF021 3B                	        popu    i
+0BF022 3C                	        popu    x
+0BF023 9F                	        rc                      ; carry CLAIR : retour propre a BASIC
+0BF024 07                	        retf
+0BF025                   	
+0BF025                   	; ============================================================================
+0BF025                   	; LA FONCTION -- l'interpreteur y saute a lpeek_m3 + 3
+0BF025                   	; ============================================================================
+0BF025                   	lpeek_m3:
+0BF025 00 00 00          	        db      0,0,0           ; les trois octets que le resolveur saute
+0BF028                   	
+0BF028                   	lpeek:
+0BF028                   	; ---------------------------------------------------------------------------
+0BF028                   	; SONDE 3 -- declaree INSTRUCTION (bit 7), et ne fait rien.
+0BF028                   	;
+0BF028                   	; « PRINT LSEPT (5) » a rendu « Array specified without DIM » : en position
+0BF028                   	; d'EXPRESSION, l'interpreteur voit notre mot-cle comme un nom de VARIABLE.
+0BF028                   	; Le token n'y est donc pas resolu comme fonction.
+0BF028                   	;
+0BF028                   	; Cette sonde le declare en instruction -- bit 7 au lieu du bit 6, et la
+0BF028                   	; routine pointee DIRECTEMENT (pas d'adresse-3). Elle ne fait rien du tout.
+0BF028                   	;
+0BF028                   	;   « LSEPT » seul ne dit rien   -> toute la chaine d'extension fonctionne,
+0BF028                   	;                                   et SEUL le bit fonction reste a percer.
+0BF028                   	;   « LSEPT » erreur             -> le probleme est en amont, et il ne sert a
+0BF028                   	;                                   rien de chercher du cote des fonctions.
+0BF028                   	; ---------------------------------------------------------------------------
+0BF028 9F                	        rc                      ; pas d'erreur
+0BF029 07                	        retf
+0BF02A                   	
+0BF02A                   	; ============================================================================
+0BF02A                   	; LES DEUX TABLES
+0BF02A                   	; ============================================================================
+0BF02A                   	kw_table:
+0BF02A 05 4C 53 45 50 54 	        db      5,'LSEPT',token
+0BF030 07                	
+0BF031 00                	        db      0                       ; fin de table
+0BF032                   	
+0BF032                   	disp_table:
+0BF032                   	; token, puis l'adresse de la routine sur 3 octets, BIT 7 arme = "instruction".
+0BF032                   	; Pour une FONCTION ce serait (routine - 3) avec le bit 6 : 040h au lieu de 080h.
+0BF032                   	; L'entree obtenue, « 07 28 F0 8B », a exactement la forme de celles de BASCOM
+0BF032                   	; (« 04 BB DF 8B ») -- meme quartet 8.
+0BF032 07                	        db      token
+0BF033 28                	        db      lpeek
+0BF034 F0                	        db      lpeek/256
+0BF035 8B                	        db      lpeek/65536+080H
+0BF036 00                	        db      0                       ; fin de table
+0BF037                   	
+0BF037                   	; ============================================================================
+0BF037                   	; LES CROCHETS D'ORIGINE, pour desinstaller
+0BF037                   	; ============================================================================
+0BF037 00 00 00          	old_kw:   db    0,0,0
+0BF03A 00 00 00          	old_disp: db    0,0,0
+0BF03D                   	
+0BF03D                   	        end
+
+ - Symbols -
+
+0000EFh  amc
+0BFCBCh  apo_time
+0000D1h  basptr
+0BFD0Eh  baswrk
+0000D5h  bh
+0EFB6Fh  bin2dec
+0000D4h  bl
+0000ECh  bp_ram
+0000EAh  brkmsk
+0000D7h  ch
+0EFBF3h  chknum
+0000D6h  cl
+0BFC29h  ctrl_disp
+0000CEh  datbas
+0EFAD4h  dec2bin
+000000h  dev_display
+000007h  dev_fdd
+000009h  dev_function
+000001h  dev_key
+000006h  dev_memcard
+000005h  dev_memfile
+000003h  dev_printer
+000002h  dev_sio
+000008h  dev_system
+000004h  dev_tape
+0000D9h  dh
+0000DDh  di
+00004Fh  display_box_fill
+000042h  display_chars_out_at
+000041h  display_char_out_at
+000051h  display_clear_disp
+000052h  display_clear_from
+000049h  display_clear_line
+000045h  display_cursor_type
+000057h  display_disp_no_clip
+000050h  display_disp_state
+00004Bh  display_dot8_read
+00004Ah  display_dot8_write
+00004Dh  display_dot_read
+00004Ch  display_dot_write
+000058h  display_guide_line
+000054h  display_insert_line
+00004Eh  display_line_draw
+000055h  display_pattern_read
+000056h  display_pattern_write
+000048h  display_scroll_down
+000047h  display_scroll_up
+000044h  display_set_cursor
+000046h  display_symbol_disp
+0BF032h  disp_table
+0000D8h  dl
+0BFC96h  dotsop
+0E01C2h  drv_off
+0BFCA2h  d_link
+0000F6h  eih
+0000F5h  eil
+0000F4h  eoh
+0000F3h  eol
+00000Ah  err_syn
+0FFFE4h  fcs_call
+000002h  fcs_close_file
+000000h  fcs_create_file
+00000Eh  fcs_delete_file
+00000Ah  fcs_file_info
+00000Ch  fcs_find_file
+00000Fh  fcs_free_space
+000010h  fcs_init_fcs
+000001h  fcs_open_file
+000003h  fcs_read_block
+000005h  fcs_read_byte
+000008h  fcs_read_byte_nd
+00000Dh  fcs_rename_file
+000009h  fcs_seek
+00000Bh  fcs_set_dir
+000007h  fcs_verify_file
+000004h  fcs_write_block
+000006h  fcs_write_byte
+0BFC87h  font_00_1f
+0BFC90h  font_20_7f
+0BFC8Ah  font_80_9f
+0BFC93h  font_a0_df
+0BFC8Dh  font_e0_ff
+0BFC3Fh  funckey_flag
+0BFC46h  funckey_name
+0BFC45h  funckey_slot
+000055h  function_abs
+000051h  function_acos
+000047h  function_add
+000076h  function_asc
+000050h  function_asin
+000052h  function_atan
+00007Fh  function_bin2dec
+000077h  function_chr_s
+00004Eh  function_cos
+00007Eh  function_dec2bin
+000053h  function_deg
+00004Ah  function_div
+000054h  function_dms
+00004Ch  function_exp
+000056h  function_int
+00005Bh  function_ln
+00005Ah  function_log
+000049h  function_mul
+000044h  function_num_eq
+000046h  function_num_ge
+000043h  function_num_gt
+000045h  function_num_le
+000042h  function_num_lt
+000041h  function_num_ne
+00004Bh  function_pow
+000058h  function_rnd
+000057h  function_sgn
+00004Dh  function_sin
+000059h  function_sqr
+000073h  function_str_eq
+000075h  function_str_ge
+000072h  function_str_gt
+000074h  function_str_le
+000071h  function_str_lt
+000070h  function_str_ne
+000078h  function_str_s
+000048h  function_sub
+00004Fh  function_tan
+000079h  function_val
+0000EBh  iisr
+0000FBh  imr
+0BFCD8h  intv_ext
+0BFCC6h  intv_ftimer
+0BFCCFh  intv_onkey
+0BFCD5h  intv_sio_rx
+0BFCD2h  intv_sio_tx
+0BFCDBh  intv_soft
+0BFCC9h  intv_stimer
+0000E6h  iocsw
+0BFD17h  iocswrk
+0FFFE8h  iocs_call
+0FFFDCh  iocs_call3
+000009h  iocs_char_close
+000008h  iocs_char_open
+000022h  iocs_close_file
+000020h  iocs_create_file
+00002Eh  iocs_delete_file
+000003h  iocs_drive_name
+00002Ah  iocs_file_info
+000000h  iocs_find_drive
+00002Ch  iocs_find_file
+00003Fh  iocs_format
+000004h  iocs_format_drive
+00002Fh  iocs_free_space
+000001h  iocs_header_addr
+000002h  iocs_header_next
+000005h  iocs_init_all
+000040h  iocs_init_device
+000010h  iocs_media_check
+000011h  iocs_media_param
+000021h  iocs_open_file
+00000Ah  iocs_read_block
+00000Ch  iocs_read_byte
+00000Eh  iocs_read_byte_nd
+000012h  iocs_read_sector
+00002Dh  iocs_rename_file
+000017h  iocs_sector_addr
+000029h  iocs_seek
+00002Bh  iocs_set_dir
+000016h  iocs_status_read
+000027h  iocs_verify_file
+000015h  iocs_verify_sector
+00000Bh  iocs_write_block
+00000Dh  iocs_write_byte
+000013h  iocs_write_sector
+000014h  iocs_write_verify_sector
+0000FCh  isr
+0BFCC0h  keymtx_tbl
+0BFCBFh  keyrep
+0BFC2Dh  keytbl_1b
+0BFC39h  keytbl_1b_ctrl
+0BFC33h  keytbl_1b_shift
+0BFC30h  keytbl_2b
+0BFC3Ch  keytbl_2b_ctrl
+0BFC36h  keytbl_2b_shift
+0BFCCCh  keyvct
+000045h  key_buffer_clear
+00003Fh  key_conv_table_set
+000046h  key_fkey_display
+0BFC41h  key_hook1
+0BFCC3h  key_hook2
+000040h  key_init_driver
+000044h  key_key_buffer_set
+000043h  key_key_read
+000041h  key_matrix_read
+000042h  key_matrix_read_nd
+0000F2h  ki
+0000F0h  ko
+0000F1h  koh
+0BF02Ah  kw_table
+0000FEh  lcc
+00A004h  lcd1_cmd
+002004h  lcd1_cmd_2000
+00A006h  lcd1_data
+002006h  lcd1_data_2000
+00A007h  lcd1_read
+002007h  lcd1_read_2000
+00A005h  lcd1_stat
+002005h  lcd1_stat_2000
+00A008h  lcd2_cmd
+002008h  lcd2_cmd_2000
+00A00Ah  lcd2_data
+00200Ah  lcd2_data_2000
+00A00Bh  lcd2_read
+00200Bh  lcd2_read_2000
+00A009h  lcd2_stat
+002009h  lcd2_stat_2000
+00A000h  lcd_cmd
+002000h  lcd_cmd_2000
+0BFC9Bh  lcd_crsr_x
+0BFC9Ch  lcd_crsr_y
+00A002h  lcd_data
+002002h  lcd_data_2000
+0BFC9Eh  lcd_height
+0BFCA1h  lcd_mode
+0BFC9Dh  lcd_width
+0BFC2Ah  linprn
+0BF028h  lpeek
+0BF025h  lpeek_m3
+000045h  memcard_block_create
+000048h  memcard_block_create_top
+000046h  memcard_block_delete
+000044h  memcard_block_rename
+000042h  memcard_block_resize
+000043h  memcard_block_transfer
+000047h  memcard_condense
+000041h  memcard_search_phys
+0BF03Ah  old_disp
+0BF037h  old_kw
+000043h  printer_printer_check
+000041h  printer_print_out
+000042h  printer_print_pos
+0000EDh  px
+0000EEh  py
+0BFCBBh  repeat_pitch
+0BFCBAh  repeat_wait
+0000F9h  rxd
+0BFCDEh  s1_btm
+0BFC18h  s1_cap
+0BFC15h  s1_top
+0BFC12h  s2_cap
+0BFC0Fh  s2_top
+0BFC0Ch  s3_cap
+0BFC09h  s3_top
+0000FDh  scr
+0BFC27h  scrn_crsr_x
+0BFC28h  scrn_crsr_y
+0FFFD8h  secure_work_call
+0000DAh  si
+0BFD33h  sio_baud
+000042h  sio_byte_in
+000041h  sio_byte_out
+0BFD62h  sio_close_data
+0BFD3Bh  sio_crlf
+0BFD3Ch  sio_eof
+000048h  sio_er_high
+000049h  sio_er_low
+0BFD61h  sio_open_data
+0BFD41h  sio_open_port_ctrl
+0BFD40h  sio_open_wait
+00004Bh  sio_read_cd
+00004Ah  sio_read_cs
+000046h  sio_rr_high
+000047h  sio_rr_low
+000044h  sio_rs_high
+000045h  sio_rs_low
+0BFD35h  sio_rx_port_cond
+0BFD36h  sio_rx_port_ctrl
+0BFD34h  sio_setup
+000043h  sio_set_hardware
+0BFD31h  sio_timer
+0BFD39h  sio_tx_delay
+0BFD37h  sio_tx_port_cond
+0BFD38h  sio_tx_port_ctrl
+0BFCBEh  softint
+0000FFh  ssr
+0BF000h  start
+0BFCE1h  swork
+000043h  system_basic_exec
+000045h  system_code_addr
+000041h  system_power_off
+000042h  system_secure_work
+000042h  tape_data_read
+000043h  tape_data_verify
+000041h  tape_data_write
+000045h  tape_header_read
+000044h  tape_header_write
+000007h  token
+0000FAh  txd
+0000CBh  txtbas
+0000F7h  ucr
+0000F8h  usr
+0BFD1Ah  usrwrk
+
+  No fatal error.  Code: 0BF000h - 0BF03Ch [       61 byte(s)]

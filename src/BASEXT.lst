@@ -1,0 +1,1843 @@
+000000                   	; ============================================================================
+000000                   	; BASEXT.ASM -- le module d'extensions du BASIC
+000000                   	; ============================================================================
+000000                   	; ATTENTION : LES NOMS DE FICHIER SHARP SONT EN 8.3
+000000                   	;    Ce module s'est d'abord appele BASIC_EXT -- neuf caracteres, un de trop.
+000000                   	;    La regle vaut pour tout ce qui part sur le lecteur, .OBJ comme .UU :
+000000                   	;    LOAD M "S1:BASEXT.OBJ" ne pardonne pas un nom trop long.
+000000                   	; ============================================================================
+000000                   	;                 LPEEK (fonction, 3 octets), WPEEK (fonction, 2 octets)
+000000                   	;                 et LPOKE (INSTRUCTION, ecrit des valeurs de 3 octets)
+000000                   	; ============================================================================
+000000                   	;
+000000                   	; ⛔ LE NOM NE POUVAIT PAS ETRE "PEEKX", ET L'ESSAI MACHINE L'A MONTRE.
+000000                   	;    Le tokeniseur consulte la table de la ROM AVANT la notre. "PEEKX" y est
+000000                   	;    donc coupe en PEEK + la variable X, et la ligne devient une erreur de
+000000                   	;    syntaxe -- relue ensuite, elle s'affiche litteralement
+000000                   	;    "PRINT HEX$ PEEK X &BF100".
+000000                   	;
+000000                   	;    LA REGLE, valable pour toute extension : un mot-cle ajoute ne doit pas
+000000                   	;    COMMENCER par un mot-cle existant, ni etre le debut de l'un d'eux. Cela se
+000000                   	;    verifie avant d'ecrire une ligne de code, sur les 168 noms de
+000000                   	;    Data/BasicTokens.csv. LPEEK est libre dans les deux sens.
+000000                   	;
+000000                   	;   LPEEK &BF0B8   rend la valeur de l'adresse 3 octets rangee en &BF0B8,
+000000                   	;                  soit l'equivalent de
+000000                   	;                  PEEK &BF0B8 + PEEK &BF0B9 * 256 + PEEK &BF0BA * 65536
+000000                   	;
+000000                   	; Ce n'est pas un CALL : c'est une INSTRUCTION DU LANGAGE, utilisable dans une
+000000                   	; expression -- PRINT LPEEK &BF0B8, A = LPEEK X + 1, etc.
+000000                   	;
+000000                   	;   LOAD M "S1:LPEEK.OBJ" : CALL &BF000      installe
+000000                   	;   PRINT HEX$ LPEEK &BF0B8
+000000                   	;
+000000                   	; ---------------------------------------------------------------------------
+000000                   	; COMMENT L'INTERPRETEUR NOUS TROUVE  (tout est lu dans la ROM)
+000000                   	; ---------------------------------------------------------------------------
+000000                   	;
+000000                   	; Deux crochets dans la zone de travail du BASIC, x = (baswrk) = (0D1h) :
+000000                   	;
+000000                   	;   [x+090h]   la table de mots-cles      (texte -> token)
+000000                   	;   [x+093h]   la table de repartition    (token -> routine)
+000000                   	;
+000000                   	; La ROM y met 0FFFFFh au demarrage (SUB_F93C3) : la sentinelle "rien".
+000000                   	;
+000000                   	; La repartition se balaie par SUB_F593D (0F593Dh) : entrees de QUATRE octets,
+000000                   	; token puis adresse, arret sur un token 000h.
+000000                   	;
+000000                   	; ⛔ ET LE QUARTET HAUT DU 3e OCTET D'ADRESSE EST UN DRAPEAU. Les deux
+000000                   	;    resolveurs de la ROM sont cote a cote et ne different que par le bit :
+000000                   	;
+000000                   	;      0F58E5h  instruction : test a,080h -> routine = l'adresse telle quelle
+000000                   	;      0F590Bh  FONCTION    : test a,040h -> routine = l'adresse + 3
+000000                   	;
+000000                   	;    PEEKX etant une fonction, on range donc (routine - 3) avec le bit 6 arme.
+000000                   	;    Les trois octets sautes n'ont aucun sens : dans la ROM, ce sont ceux de la
+000000                   	;    routine precedente. On y met trois zeros.
+000000                   	;
+000000                   	; ---------------------------------------------------------------------------
+000000                   	; LE CORPS -- calque sur BAS_PEEK (0F9F44h), avec les entrees LOINTAINES
+000000                   	; ---------------------------------------------------------------------------
+000000                   	;
+000000                   	; Une extension vit en page 0B, les services en 0E et 0F. Un service termine
+000000                   	; par RET ne se laisse PAS appeler d'ici : son retour depile 2 octets et reste
+000000                   	; dans SA page. Il faut donc, pour chaque service, l'entree qui finit par RETF.
+000000                   	;
+000000                   	;   BAS_PEEK fait            ici on fait              parce que
+000000                   	;   -----------------------  -----------------------  ------------------------
+000000                   	;   call SUB_F5F9C           callf 0EFBF3h            F5F9C finit par RET ;
+000000                   	;                            puis callf 0EFAD4h       EFBF3 et EFAD4 par RETF.
+000000                   	;                                                     F5F9C n'etait que
+000000                   	;                                                     "callf EFBF3 + call
+000000                   	;                                                     F5C9A", et F5C9A n'etait
+000000                   	;                                                     que "callf EFAD4 + mv y".
+000000                   	;   callf SUB_EFB6F          callf 0EFB6Fh            deja lointaine
+000000                   	;
+000000                   	; 0EFAD4h et 0EFB6Fh sont les commandes 07Eh et 07Fh du device 9 -- dec2bin et
+000000                   	; bin2dec. Le travail sur la bibliotheque mathematique sert directement ici.
+000000                   	;
+000000                   	; ⛔ LE CADRE BP -- ET J'AI D'ABORD MAL LU SUB_F5C9A.
+000000                   	;
+000000                   	;    Elle se termine par "jr LOC_F5C6F", que je n'avais pas suivi. Or LOC_F5C6F
+000000                   	;    fait "pmdf (bp_ram),00Fh" : BP + 15. Le compte, entree a sortie :
+000000                   	;
+000000                   	;      entree                          BP = B
+000000                   	;      callf chknum                    BP = B-15   <- le cadre de la valeur
+000000                   	;      SUB_F5C9A finit par +15         BP = B
+000000                   	;      BAS_PEEK fait -15               BP = B-15   <- ou il ecrit son resultat
+000000                   	;
+000000                   	;    Ici on n'appelle pas F5C9A, donc on n'a PAS le +15 : apres chknum, BP vaut
+000000                   	;    deja B-15, c'est-a-dire exactement le bon cadre. Il ne faut donc AUCUN
+000000                   	;    pmdf sur le chemin de succes. La premiere version gardait le -15 de
+000000                   	;    BAS_PEEK sans son +15 : elle ecrivait en B-30.
+000000                   	;
+000000                   	;    Sur le chemin d'ERREUR, en revanche, il faut le +15 : F5C9A le fait dans
+000000                   	;    tous les cas, y compris son erreur 33 (LOC_F5C74 saute a LOC_F5C6F).
+000000                   	;
+000000                   	; ⛔ ET ON ECRIT (BP+n), PAS (000H). Sous pre_on, "(000H)" designe l'adresse
+000000                   	;    DIRECTE 0 ; le mode (BP+n) est celui qui n'emet PAS d'octet PRE. Le
+000000                   	;    controle se fait dans l'OBJET : sur ces lignes, BAS_PEEK ne porte aucun
+000000                   	;    PRE (E0 05 01, CC 00 00, CD 02 00 00). Une premiere version de ce fichier
+000000                   	;    portait "30 80 00" -- un PRE, donc l'adresse directe : la fonction lisait
+000000                   	;    la RAM interne 0 au lieu du cadre de l'argument.
+000000                   	;
+000000                   	;       xasm2026-4 BASEXT.ASM -O -L -S -B -K
+000000                   	; ============================================================================
+000000                   	
+000000                   	        include pce500.inc
+000000                   	basptr: equ 0D1H ; POINTEUR (3 octets) vers la zone de travail de l'interpreteur BASIC, en RAM interne. C'est la COPIE de celui que la ROM lit en 0BFD0Eh (baswrk) : elle la fait par mvp (0D1h),[0BFD0Eh] en 0F98CAh. Les crochets d'extension du BAS ...
+000000                   	bp_ram: equ 0ECH ; base pointer RAM interne
+000000                   	
+000000                   	; --- les entrees LOINTAINES de la ROM (toutes terminees par RETF) -----------
+000000                   	chknum:   equ   0EFBF3H    ; evalue l'expression numerique, verifie le type
+000000                   	dec2bin:  equ   0EFAD4H    ; le nombre -> entier 24 bits en (bp+1)..(bp+3)
+000000                   	bin2dec:  equ   0EFB6FH    ; l'entier de (bp+0)..(bp+3) -> nombre BASIC
+000000                   	
+000000                   	; ⛔ DEUX EVALUATEURS, ET ILS NE LISENT PAS LA MEME CHOSE.
+000000                   	;    chknum (0EFBF3h) ne lit qu'UN TERME : un nombre, une variable, un appel de
+000000                   	;    fonction, ou une expression entre parentheses -- mais il s'arrete au premier
+000000                   	;    OPERATEUR. C'est ce que PEEK emploie (0F5F9Ch), et c'est pourquoi
+000000                   	;    « PEEK &BFD1C*&100 » se lit « (PEEK &BFD1C)*&100 ».
+000000                   	;    eval (0EF26Eh) evalue une EXPRESSION COMPLETE, operateurs compris. C'est ce
+000000                   	;    qu'emploie POINT (x,y), via SUB_F5F65 en 0F5F65h -- et la reconnaissance des
+000000                   	;    operateurs AND/OR/XOR est cablee juste a cote, en 0EF2C5h. Douze sites de la
+000000                   	;    ROM l'appellent par « callf ».
+000000                   	;
+000000                   	;    MOD emprunte sa syntaxe a POINT : il lui faut donc le second, et LPEEK garde
+000000                   	;    le premier puisqu'il est calque sur PEEK. Mesure sur machine avant la
+000000                   	;    correction : MOD (17,5) et MOD (A,B) passaient, mais MOD (A+1,B) et
+000000                   	;    MOD (I*3571,997) rendaient une erreur -- chknum lisait « A », puis butait
+000000                   	;    sur le « + ».
+000000                   	;
+000000                   	;    ⚠️ eval ne signale PAS lui-meme le type : ses appelants de la ROM font le
+000000                   	;    « test (000h),080h » a sa suite (0F5F6Bh). On fait de meme.
+000000                   	eval:     equ   0EF26EH    ; expression numerique complete -> (bp+0)
+000000                   	
+000000                   	
+000000                   	tk_lp:    equ   007H       ; LPEEK -- libre dans la table de la ROM
+000000                   	tk_wp:    equ   00AH       ; WPEEK -- libre aussi (BASCOM occupe 04-06)
+000000                   	tk_lpo:   equ   00EH       ; LPOKE -- libre
+000000                   	tk_mod:   equ   00FH       ; MOD   -- libre
+000000                   	tk_uc:    equ   0C6H       ; UCASE$ (fonctions chaine ajoutees)
+000000                   	tk_lc:    equ   0C7H       ; LCASE$
+000000                   	tk_tr:    equ   0C3H       ; TRIM$
+000000                   	tk_lt:    equ   0C4H       ; LTRIM$
+000000                   	tk_rt:    equ   0C5H       ; RTRIM$
+000000                   	tk_rp:    equ   0C8H       ; REPT$
+000000                   	tk_sr:    equ   0C9H       ; SREPT$
+000000                   	tk_in:    equ   0C2H       ; INSTR (rend un NOMBRE)
+000000                   	alloc:    equ   0EF0DDH    ; reserve BA octets sur U (U -= BA) ; carry = erreur 54
+000000                   	
+000000                   	
+000000                   	; ⛔ NE PAS ECRIRE « baswrk » ICI. C'est la ZONE de travail, en memoire EXTERNE
+000000                   	;    (0BFD0Eh) -- nom repris du listing de E. Kako, ou il est declare
+000000                   	;    « baswrk: equ 0bfd0eh ». Le pointeur qu'il nous faut est en RAM INTERNE, a
+000000                   	;    0D1h, que le carnet nommait « baswrk » lui aussi jusqu'au 2026-09-03 et
+000000                   	;    nomme desormais « basptr ». Depuis, pce500.inc EXPOSE les deux et le
+000000                   	;    generateur REFUSE une collision de noms : il n'y a plus d'equ local ici.
+000000                   	;    Et « mv x,(baswrk) » ne proteste pas : l'operande interne fait 8 bits, XASM
+000000                   	;    TRONQUE 0BFD0Eh en 0Eh. Le code ecrivait donc les crochets en
+000000                   	;    [(00Eh)+090h], et la table d'extension n'a jamais ete installee.
+000000                   	;    Verifiable dans l'objet : on doit lire « 30 84 D1 », pas « 30 84 0E ».
+000000                   	err_syn:  equ   00AH       ; erreur BASIC 10, Syntax error
+000000                   	err_range: equ  021H       ; erreur BASIC 33, Data out of range
+000000                   	err_type: equ   05AH       ; erreur BASIC 90, Type mismatch -- le code que
+000000                   	                          ; chknum emploie lui-meme (0EFC04h)
+000000                   	err_buf:  equ   036H       ; erreur BASIC 54, Buffer space exceeded
+000000                   	err_div:  equ   015H       ; erreur BASIC 21, Division by zero -- le code
+000000                   	                          ; que la ROM elle-meme emploie, lu en 0ECD67h
+000000                   	
+0BF000                   	        org     0BF000H
+0BF000                   	        pre_on
+0BF000                   	
+0BF000                   	; ============================================================================
+0BF000                   	; L'INSTALLATION -- c'est ici que mene CALL &BF000
+0BF000                   	; ============================================================================
+0BF000                   	start:
+0BF000 2C                	        pushu   x               ; X porte le point de reprise de l'interpreteur
+0BF001 2B                	        pushu   i
+0BF002 30 84 D1          	        mv      x,(basptr)
+0BF005                   	
+0BF005                   	; ⛔ NE SAUVER LES CROCHETS QUE S'ILS SONT ENCORE CEUX DE LA ROM.
+0BF005                   	;    Une premiere version sauvait sans regarder : au SECOND CALL &BF000 elle
+0BF005                   	;    ecrasait old_kw et old_disp avec NOS PROPRES tables, et les valeurs
+0BF005                   	;    d'origine etaient perdues -- la desinstallation avec. Constate sur machine
+0BF005                   	;    le 2026-09-05 : le vidage montrait old_kw = 0BF1B1h et old_disp = 0BF1CCh,
+0BF005                   	;    c'est-a-dire kw_table et disp_table de ce module.
+0BF005                   	;
+0BF005                   	;    ⛔ ET LA RAISON N'EST PAS CELLE QUE J'AVAIS ECRITE. J'avais justifie le
+0BF005                   	;    test par « les tables du BASIC vivent en page 0F ». C'est faux : le crochet
+0BF005                   	;    ne pointe JAMAIS sur la table de la ROM. La ROM y ecrit une SENTINELLE,
+0BF005                   	;    0FFFFFh, et cela se lit en 0F93C3h :
+0BF005                   	;
+0BF005                   	;       mv  x,(basptr)
+0BF005                   	;       mv  y,0FFFFFh
+0BF005                   	;       mv  [x+090h],y
+0BF005                   	;       mv  [x+093h],y
+0BF005                   	;
+0BF005                   	;    L'octet de poids fort d'un crochet vierge vaut donc 0Fh, et le test le
+0BF005                   	;    reconnait -- mais ce qu'il reconnait est la sentinelle, pas une table. Une
+0BF005                   	;    extension, elle, vit en RAM, page 0B : son crochet ne peut pas valoir 0Fh.
+0BF005                   	;    Le test est donc juste, et il l'est desormais pour la bonne raison.
+0BF005                   	;
+0BF005                   	;    ⚠️ Il pourrait etre plus strict : comparer les TROIS octets a 0FFFFFh plutot
+0BF005                   	;    que le seul poids fort. En l'etat il accepterait n'importe quel 0Fxxxxh, ce
+0BF005                   	;    qu'aucune extension ne peut produire -- mais la ROM le pourrait un jour.
+0BF005                   	;
+0BF005                   	;    ⚠️ Et il n'y a PAS de chainage : un second module ecraserait le premier.
+0BF005                   	;    Refuser d'ecraser la sauvegarde est donc la seule conduite sensee.
+0BF005 90 84 92          	        mv      a,[x+092H]      ; poids fort du crochet des mots-cles
+0BF008 60 0F             	        cmp     a,00FH          ; encore la table de la ROM ?
+0BF00A 1A 0E             	        jrnz    deja_ext        ; non : ne rien ecraser
+0BF00C 95 84 90          	        mv      y,[x+090H]      ; l'ancienne table de mots-cles
+0BF00F AD C6 F6 0B       	        mv      [old_kw],y      ;   sauvee : de quoi desinstaller
+0BF013 95 84 93          	        mv      y,[x+093H]      ; l'ancienne table de repartition
+0BF016 AD C9 F6 0B       	        mv      [old_disp],y
+0BF01A                   	deja_ext:
+0BF01A 0D 2C F6 0B       	        mv      y,kw_table
+0BF01E B5 84 90          	        mv      [x+090H],y
+0BF021 0D 84 F6 0B       	        mv      y,disp_table
+0BF025 B5 84 93          	        mv      [x+093H],y
+0BF028 3B                	        popu    i
+0BF029 3C                	        popu    x
+0BF02A 9F                	        rc                      ; carry CLAIR : retour propre a BASIC
+0BF02B 07                	        retf
+0BF02C                   	
+0BF02C                   	; ============================================================================
+0BF02C                   	; LA FONCTION -- l'interpreteur y saute a lpeek_m3 + 3
+0BF02C                   	; ============================================================================
+0BF02C                   	lpeek_m3:
+0BF02C 00 00 00          	        db      0,0,0           ; les trois octets que le resolveur saute
+0BF02F                   	
+0BF02F                   	lpeek:
+0BF02F 05 F3 FB 0E       	        callf   chknum          ; l'argument -> cadre pousse, nombre en (bp+0)
+0BF033 1C 27             	        jrc     dehors          ; X n'est pas encore sauve : rien a rendre
+0BF035 05 D4 FA 0E       	        callf   dec2bin         ; -> entier 24 bits en (bp+1)..(bp+3)
+0BF039 1C 21             	        jrc     dehors
+0BF03B 80 00             	        mv      a,(BP+0)        ; (bp+0) : bit 3 = signe
+0BF03D 64 08             	        test    a,008H
+0BF03F 1A 1C             	        jrnz    refus           ; adresse negative
+0BF041 80 03             	        mv      a,(BP+3)        ; l'octet de poids fort du 24 bits
+0BF043 60 10             	        cmp     a,010H
+0BF045 1E 16             	        jrnc    refus           ; au-dela de 0FFFFFh : hors de l'espace
+0BF047                   	
+0BF047                   	; ⛔ X PORTE LE POINT DE REPRISE, ET bin2dec L'ECRASE.
+0BF047                   	;    chknum a fait AVANCER X au-dela de l'argument : c'est cette valeur-la que
+0BF047                   	;    l'interpreteur attend au retour. On la sauve donc APRES chknum, jamais
+0BF047                   	;    avant -- exactement ou BAS_PEEK place son pushu (0F9F49h).
+0BF047                   	;    L'oubli ne plante pas : le nom est reconnu, la fonction s'execute, et
+0BF047                   	;    l'interpreteur reprend n'importe ou -- "Syntax error" sans autre indice.
+0BF047 2C                	        pushu   x
+0BF048                   	
+0BF048 85 01             	        mv      y,(BP+1)        ; l'adresse demandee
+0BF04A E2 05 01          	        mvp     (BP+1),[y]      ; les TROIS octets a cette adresse
+0BF04D                   	
+0BF04D                   	; ⛔ bin2dec NE CONVERTIT QUE 20 BITS, et c'est lu dans son code (0EFB8Bh) :
+0BF04D                   	;    trois passes de decalage, 8 bits sur (bp+11), 8 sur (bp+12), puis
+0BF04D                   	;    QUATRE seulement sur (bp+13) -- « mv (00Eh),004h ». 8+8+4 = 20. Le quartet
+0BF04D                   	;    haut du troisieme octet est ignore par construction : c'est un convertisseur
+0BF04D                   	;    d'ADRESSE, et une adresse fait 20 bits sur cette machine.
+0BF04D                   	;    Mesure : &345678 revenait en &045678, sans que rien ne le signale.
+0BF04D                   	;    On REFUSE donc plutot que de mentir -- une valeur fausse en silence est
+0BF04D                   	;    pire qu'une erreur.
+0BF04D 80 03             	        mv      a,(BP+3)
+0BF04F 70 F0             	        and     a,0F0H
+0BF051 1A 12             	        jrnz    hors_plage      ; quartet haut non nul : bin2dec le perdrait
+0BF053                   	
+0BF053 CC 00 00          	        mv      (BP+0),000H     ; positif, simple precision
+0BF056 05 6F FB 0E       	        callf   bin2dec         ; -> nombre BASIC en (bp+0)
+0BF05A 9F                	        rc
+0BF05B 3C                	        popu    x               ; rendre son point de reprise a l'interpreteur
+0BF05C                   	dehors:
+0BF05C 07                	        retf
+0BF05D                   	
+0BF05D                   	refus:
+0BF05D 30 47 EC 0F       	        pmdf    (bp_ram),00FH   ; +15 : rendre BP comme le fait SUB_F5C9A
+0BF061 08 0A             	        mv      a,err_syn
+0BF063 97                	        sc
+0BF064 07                	        retf
+0BF065                   	
+0BF065                   	; La valeur lue depasse 20 bits : erreur 33, celle que SUB_F5C9A emploie pour
+0BF065                   	; le meme cas. X a ete sauve, il faut le rendre.
+0BF065                   	hors_plage:
+0BF065 3C                	        popu    x
+0BF066 30 47 EC 0F       	        pmdf    (bp_ram),00FH
+0BF06A 08 21             	        mv      a,err_range
+0BF06C 97                	        sc
+0BF06D 07                	        retf
+0BF06E                   	
+0BF06E                   	; ============================================================================
+0BF06E                   	; LA SECONDE FONCTION -- WPEEK, deux octets au lieu de trois
+0BF06E                   	; ============================================================================
+0BF06E                   	; Meme structure exactement. Elle n'existe que pour eprouver l'ENCHAINEMENT :
+0BF06E                   	; nos deux tables n'avaient jamais porte qu'une seule entree, donc ni le
+0BF06E                   	; balayage de SUB_F593D (« add y,004h » en boucle) ni celui du tokeniseur
+0BF06E                   	; n'etaient exerces. Deux entrees suffisent a les mettre en defaut s'ils le
+0BF06E                   	; sont -- et a montrer qu'aucune adresse n'en ecrase une autre.
+0BF06E                   	;
+0BF06E                   	; WPEEK n'a pas besoin du garde-fou des 20 bits : deux octets tiennent
+0BF06E                   	; toujours dedans.
+0BF06E                   	
+0BF06E                   	wpeek_m3:
+0BF06E 00 00 00          	        db      0,0,0           ; les trois octets que le resolveur saute
+0BF071                   	
+0BF071                   	wpeek:
+0BF071 05 F3 FB 0E       	        callf   chknum
+0BF075 1C 24             	        jrc     dehors2
+0BF077 05 D4 FA 0E       	        callf   dec2bin
+0BF07B 1C 1E             	        jrc     dehors2
+0BF07D 80 00             	        mv      a,(BP+0)
+0BF07F 64 08             	        test    a,008H
+0BF081 1A 19             	        jrnz    refus2
+0BF083 80 03             	        mv      a,(BP+3)
+0BF085 60 10             	        cmp     a,010H
+0BF087 1E 13             	        jrnc    refus2
+0BF089 2C                	        pushu   x
+0BF08A 85 01             	        mv      y,(BP+1)
+0BF08C                   	; ⛔ mvw, PAS mv. Les trois largeurs sont mv (1 octet), mvw (2) et mvp (3) --
+0BF08C                   	;    « mv » ne transfere QU'UN octet, et un commentaire disant « deux octets :
+0BF08C                   	;    mv, pas mvp » ne le rend pas vrai. Mesure : WPEEK rendait F178 et F1B8,
+0BF08C                   	;    l'octet bas juste et l'octet haut jamais ecrit, donc laisse a sa valeur
+0BF08C                   	;    precedente -- F1 les deux fois.
+0BF08C E1 05 01          	        mvw     (BP+1),[y]      ; DEUX octets
+0BF08F CC 03 00          	        mv      (BP+3),000H     ; le troisieme reste nul
+0BF092 CC 00 00          	        mv      (BP+0),000H
+0BF095 05 6F FB 0E       	        callf   bin2dec
+0BF099 9F                	        rc
+0BF09A 3C                	        popu    x
+0BF09B                   	dehors2:
+0BF09B 07                	        retf
+0BF09C                   	
+0BF09C                   	refus2:
+0BF09C 30 47 EC 0F       	        pmdf    (bp_ram),00FH
+0BF0A0 08 0A             	        mv      a,err_syn
+0BF0A2 97                	        sc
+0BF0A3 07                	        retf
+0BF0A4                   	
+0BF0A4                   	; ============================================================================
+0BF0A4                   	; L'INSTRUCTION LPOKE destination,valeur1,valeur2,...
+0BF0A4                   	; ============================================================================
+0BF0A4                   	; Ecrit chaque valeur sur TROIS octets, en ordre petit-boutien, a des adresses
+0BF0A4                   	; consecutives :
+0BF0A4                   	;
+0BF0A4                   	;   LPOKE &BF000,&123456,&789ABC   met 56 34 12 en &BF000
+0BF0A4                   	;                                  puis BC 9A 78 en &BF003
+0BF0A4                   	;
+0BF0A4                   	; C'est le pendant de LPEEK, et il comble un manque reel : ces pointeurs de
+0BF0A4                   	; trois octets se decomposaient jusqu'ici a la main, cote BASIC --
+0BF0A4                   	;   AH=INT (AD/&10000):AM=INT ((AD-AH*&10000)/&100):AL=AD-AH*&10000-AM*&100
+0BF0A4                   	;   POKE dest,AL,AM,AH
+0BF0A4                   	;
+0BF0A4                   	; ⛔ C'EST UNE INSTRUCTION, PAS UNE FONCTION. Le resolveur de la ROM n'est donc
+0BF0A4                   	;    pas le meme : 0F58E5h teste le bit 7 et prend l'adresse TELLE QUELLE, la ou
+0BF0A4                   	;    0F590Bh teste le bit 6 et ajoute 3. L'entree de repartition porte donc 080h
+0BF0A4                   	;    et il n'y a PAS de prefixe de trois octets devant le point d'entree.
+0BF0A4                   	;
+0BF0A4                   	; ⛔ LA BOUCLE EST CELLE DE BAS_POKE (0F9F27h), Y COMPRIS SA SORTIE.
+0BF0A4                   	;    On lit un caractere, on le compare a 02Ch ; si ce n'est pas une virgule, on
+0BF0A4                   	;    rend la main -- mais en REMETTANT le caractere par un « dec x ». La ROM le
+0BF0A4                   	;    fait par une chute : son « rc » de 0F9F2Fh tombe dans le « dec x » de
+0BF0A4                   	;    0F9F30h, partage avec le chemin d'erreur. On copie cette disposition.
+0BF0A4                   	;
+0BF0A4                   	; ⛔ ET CHAQUE chknum PREND UN CADRE DE 15 OCTETS, QU'IL FAUT RENDRE.
+0BF0A4                   	;    LPEEK n'appelle chknum qu'une fois et n'a donc jamais eu a s'en soucier.
+0BF0A4                   	;    Ici la boucle en appelle un par valeur : sans le « pmdf +15 » apres chacune,
+0BF0A4                   	;    les cadres s'empilent et BP finit par sortir de sa zone. Le compte doit
+0BF0A4                   	;    revenir a zero sur TOUS les chemins, erreurs comprises.
+0BF0A4                   	;
+0BF0A4                   	; ⛔ PORTEE DES VALEURS : 20 BITS, ET C'EST dec2bin QUI L'IMPOSE.
+0BF0A4                   	;    Son code (0EFB8Bh) ne convertit que 8+8+4 bits -- constate en ecrivant
+0BF0A4                   	;    LPEEK. Une valeur au-dela de 0FFFFFh serait donc tronquee AVANT de nous
+0BF0A4                   	;    parvenir, sans que rien ne le signale et sans que nous puissions le
+0BF0A4                   	;    detecter apres coup. Sans consequence pour l'usage vise, une adresse de
+0BF0A4                   	;    cette machine faisant 20 bits, mais cela doit etre dit.
+0BF0A4                   	
+0BF0A4                   	lpoke:
+0BF0A4 05 F3 FB 0E       	        callf   chknum          ; l'adresse de destination
+0BF0A8 1C 42             	        jrc     lp_ret          ; chknum a echoue : il n'a pas pris de cadre
+0BF0AA 05 D4 FA 0E       	        callf   dec2bin
+0BF0AE 1C 3C             	        jrc     lp_ret
+0BF0B0 80 00             	        mv      a,(BP+0)        ; bit 3 = signe
+0BF0B2 64 08             	        test    a,008H
+0BF0B4 1A 37             	        jrnz    lp_syn
+0BF0B6 80 03             	        mv      a,(BP+3)
+0BF0B8 60 10             	        cmp     a,010H
+0BF0BA 1E 31             	        jrnc    lp_syn          ; au-dela de 0FFFFFh
+0BF0BC 85 01             	        mv      y,(BP+1)        ; Y = la destination
+0BF0BE 30 47 EC 0F       	        pmdf    (bp_ram),00FH   ; rendre le cadre de la destination
+0BF0C2                   	
+0BF0C2                   	lp_next:
+0BF0C2 90 24             	        mv      a,[x++]
+0BF0C4 60 2C             	        cmp     a,02CH          ; ','
+0BF0C6 1A 21             	        jrnz    lp_done         ; plus de virgule : c'est fini
+0BF0C8 2D                	        pushu   y               ; la destination, que chknum n'a pas a connaitre
+0BF0C9 05 F3 FB 0E       	        callf   chknum          ; la valeur
+0BF0CD 1C 26             	        jrc     lp_pop
+0BF0CF 05 D4 FA 0E       	        callf   dec2bin
+0BF0D3 1C 20             	        jrc     lp_pop
+0BF0D5 80 00             	        mv      a,(BP+0)
+0BF0D7 64 08             	        test    a,008H
+0BF0D9 1A 1C             	        jrnz    lp_popsyn       ; valeur negative
+0BF0DB 3D                	        popu    y
+0BF0DC EA 05 01          	        mvp     [y],(BP+1)      ; les TROIS octets, petit-boutien
+0BF0DF 08 03             	        mv      a,003H
+0BF0E1 45 50             	        add     y,a             ; adresse suivante
+0BF0E3 30 47 EC 0F       	        pmdf    (bp_ram),00FH   ; rendre le cadre de la valeur
+0BF0E7 13 27             	        jr      lp_next
+0BF0E9                   	
+0BF0E9                   	; --- sortie ----------------------------------------------------------------
+0BF0E9                   	; « rc » tombe dans « dec x » : la disposition de BAS_POKE, ou le chemin de
+0BF0E9                   	; succes et celui d'erreur partagent la remise en place du caractere.
+0BF0E9                   	lp_done:
+0BF0E9 9F                	        rc
+0BF0EA                   	lp_back:
+0BF0EA 7C 04             	        dec     x               ; rendre le caractere qui n'etait pas une virgule
+0BF0EC                   	lp_ret:
+0BF0EC 07                	        retf
+0BF0ED                   	
+0BF0ED                   	lp_syn:
+0BF0ED 30 47 EC 0F       	        pmdf    (bp_ram),00FH
+0BF0F1 08 0A             	        mv      a,err_syn
+0BF0F3 97                	        sc
+0BF0F4 07                	        retf
+0BF0F5                   	
+0BF0F5                   	; chknum ou dec2bin a echoue alors que Y etait empile : le depiler, et ne PAS
+0BF0F5                   	; rendre de cadre -- chknum n'en a pas pris.
+0BF0F5                   	lp_pop:
+0BF0F5 3D                	        popu    y
+0BF0F6 07                	        retf
+0BF0F7                   	
+0BF0F7                   	lp_popsyn:
+0BF0F7 3D                	        popu    y
+0BF0F8 30 47 EC 0F       	        pmdf    (bp_ram),00FH
+0BF0FC 08 0A             	        mv      a,err_syn
+0BF0FE 97                	        sc
+0BF0FF 07                	        retf
+0BF100                   	
+0BF100                   	; ============================================================================
+0BF100                   	; LA FONCTION MOD (A,B) -- le reste de la division entiere
+0BF100                   	; ============================================================================
+0BF100                   	; L'interpreteur y saute a modu_m3 + 3 : c'est une FONCTION (drapeau 040h).
+0BF100                   	;
+0BF100                   	;   PRINT MOD (17,5)      2
+0BF100                   	;   R = MOD (A,B)
+0BF100                   	;
+0BF100                   	; ⛔ PAS D'INFIXE POSSIBLE. « A MOD B » est hors d'atteinte : la reconnaissance
+0BF100                   	;    des operateurs est CABLEE EN DUR dans l'analyseur d'expression, en 0EF2C5h,
+0BF100                   	;    par trois comparaisons litterales contre 0A1h (AND), 0A2h (OR) et 0A5h
+0BF100                   	;    (XOR) -- ni table, ni plage, et nos deux crochets n'y donnent pas acces.
+0BF100                   	;    La syntaxe est donc celle de POINT (x,y), que la machine possede deja.
+0BF100                   	;
+0BF100                   	; ⛔ ET LE CALCUL N'EMPRUNTE RIEN A LA BIBLIOTHEQUE FLOTTANTE DE LA ROM. Deux
+0BF100                   	;    versions ont essaye de calculer A - B * INT (A/B) par les commandes du
+0BF100                   	;    device 9 ; les deux ont plante la machine (CLS puis MENU principal), et la
+0BF100                   	;    seconde alors meme que ses cinq adresses etaient JUSTES -- verifiees une a
+0BF100                   	;    une dans la table de repartition DB_EF078 du driver drv_function :
+0BF100                   	;
+0BF100                   	;      047h add 0ECBA9h   048h sub 0ECBB4h   049h mul 0ECBBFh
+0BF100                   	;      04Ah div 0ECBD8h   056h int 0EE4D5h
+0BF100                   	;
+0BF100                   	;    Ce que ces adresses ne disent pas, c'est le CONTRAT. Il y a deux diviseurs
+0BF100                   	;    (SUB_ECCEA et SUB_ECD85), l'entree 04Ah ne mene qu'au second, et le seul
+0BF100                   	;    appelant connu de la ROM -- l'evaluateur d'expression en 0E8559h -- fait
+0BF100                   	;    « mv i,0000Fh / exl (000h),(00Fh) » AVANT d'appeler : il ECHANGE X et Y,
+0BF100                   	;    ce que ne fait aucune des trois autres operations.
+0BF100                   	;
+0BF100                   	;    Le calcul est donc fait ici, en binaire, et ne s'appuie que sur des
+0BF100                   	;    primitives EPROUVEES SUR LA MACHINE par LPEEK et LPOKE : chknum, dec2bin,
+0BF100                   	;    bin2dec.
+0BF100                   	;
+0BF100                   	; ⛔ ET ON NE SUPPOSE RIEN DE CE QUE chknum FAIT DE BP. Une premiere version
+0BF100                   	;    binaire tenait pour acquis qu'un chknum EMPILE un cadre de 15 octets, donc
+0BF100                   	;    qu'apres le second appel le premier operande se lisait en (bp+16)..(bp+18).
+0BF100                   	;    Je l'avais deduit d'un enchainement de la ROM en 0ECBCAh -- une inference,
+0BF100                   	;    pas une mesure. LA MACHINE L'A DEMENTIE : elle rendait 0 pour toutes les
+0BF100                   	;    valeurs, ce qui est la signature d'un A perdu (0 mod B, ou B mod B).
+0BF100                   	;
+0BF100                   	;    Plutot que de deviner une troisieme fois la taille et le sens du cadre,
+0BF100                   	;    cette version REND LA QUESTION SANS OBJET :
+0BF100                   	;      . le premier operande est mis a l'abri en RAM du module (sv_a) des que
+0BF100                   	;        dec2bin l'a converti, donc avant que le second chknum ne puisse rien
+0BF100                   	;        ecraser ;
+0BF100                   	;      . BP est SAUVE et RESTAURE en absolu (sv_bp0, sv_bp1) au lieu d'etre
+0BF100                   	;        rattrape par des pmdf comptes a la main.
+0BF100                   	;    Le module se comporte alors exactement comme LPEEK, qui lui fonctionne :
+0BF100                   	;    resultat en (bp+0)..(bp+3), BP tel qu'il etait apres LE PREMIER chknum.
+0BF100                   	;    Que chknum empile 15 octets, 8, ou rien du tout, le resultat est le meme.
+0BF100                   	;
+0BF100                   	; LE DOMAINE : A et B sont des ENTIERS de 0 a 1048575, celui de LPEEK et de
+0BF100                   	; LPOKE. La borne n'est pas un choix mais une mesure : dec2bin accumule dans X,
+0BF100                   	; registre de 20 bits, et REFUSE lui-meme au-dela (« add x,a / jrc » en
+0BF100                   	; 0EFAFBh, puis erreur 33) -- c'est donc la ROM, et non nous, qui signale un
+0BF100                   	; operande trop grand. Un operande negatif est refuse ici : dec2bin en rend la
+0BF100                   	; valeur absolue en laissant le signe dans le bit 3 de (bp+0), donc l'ignorer
+0BF100                   	; rendrait un resultat faux en silence. Le reste etant toujours < B, il tient
+0BF100                   	; toujours dans les 20 bits que bin2dec sait reconvertir.
+0BF100                   	
+0BF100                   	modu_m3:
+0BF100 00 00 00          	        db      0,0,0           ; les trois octets que le resolveur saute
+0BF103                   	
+0BF103                   	modu:
+0BF103                   	; ⛔ LES PARENTHESES SONT OBLIGATOIRES, ET C'EST LA ROM QUI LE DIT.
+0BF103                   	;    SUB_FD5E7, le lecteur d'arguments de POINT (x,y), exige TROIS caracteres :
+0BF103                   	;    '(' en 0FD5ECh, ',' en 0FD5F9h et ')' en 0FD60Ah. Une premiere version de
+0BF103                   	;    cette fonction n'en verifiait qu'un : chknum recevait (17,5) tout entier et
+0BF103                   	;    tentait d'evaluer une expression parenthesee. PRINT MOD(17,5) repondait
+0BF103                   	;    Syntax error. Constate sur emulateur, corrige en relisant SUB_FD5E7.
+0BF103                   	md_sp:
+0BF103 90 24             	        mv      a,[x++]
+0BF105 60 20             	        cmp     a,020H          ; sauter les espaces -- ce que fait SUB_FB2D9
+0BF107 19 06             	        jrz     md_sp
+0BF109 60 28             	        cmp     a,028H          ; '(' obligatoire
+0BF10B 1A 98             	        jrnz    md_syn0
+0BF10D                   	
+0BF10D                   	; BP a l'entree : l'etat a rendre si l'on doit signaler une erreur, puisque
+0BF10D                   	; c'est celui d'avant tout ce que nous avons pu prendre.
+0BF10D 30 D8 B8 F6 0B EC 	        mv      [!sv_bp0],(bp_ram)
+0BF113                   	
+0BF113                   	; --- A, le dividende --------------------------------------------------------
+0BF113 05 6E F2 0E       	        callf   eval            ; expression complete -> (bp+0)
+0BF117 1C 8B             	        jrc     md_ret          ; echec : rien n'a ete pris
+0BF119 65 00 80          	        test    (BP+0),080H     ; bit 7 : c'est une chaine
+0BF11C 1A 9F             	        jrnz    md_type
+0BF11E                   	
+0BF11E                   	; ⛔ BP D'APRES LA PREMIERE EVALUATION, SAUVE EN ABSOLU. Le cadre pousse par
+0BF11E                   	;    chknum vaut 15 octets, MESURE sur machine (BP 150 -> 135). Celui d'eval
+0BF11E                   	;    ne l'est PAS : je ne le suppose donc pas, et je restaure BP par sa valeur
+0BF11E                   	;    plutot que par un pmdf compte a la main. sv_bp0 et sv_bp1 etant tous deux
+0BF11E                   	;    lisibles depuis le BASIC, l'ecart se mesurera au prochain essai.
+0BF11E 30 D8 B9 F6 0B EC 	        mv      [!sv_bp1],(bp_ram)
+0BF124                   	
+0BF124 05 D4 FA 0E       	        callf   dec2bin         ; A -> entier 20 bits en (bp+1)..(bp+3)
+0BF128 1C 7A             	        jrc     md_ret
+0BF12A 65 00 08          	        test    (BP+0),008H     ; bit 3 : le signe
+0BF12D 1A 98             	        jrnz    md_neg
+0BF12F                   	
+0BF12F                   	; ⛔ A EST MIS A L'ABRI ICI, ET C'EST TOUT L'INTERET DE CETTE VERSION. Le second
+0BF12F                   	;    chknum ecrit sa valeur en (bp+0), et rien ne garantit qu'il ait d'abord
+0BF12F                   	;    decale le cadre : la version precedente l'a suppose et perdait A.
+0BF12F DA B5 F6 0B 01    	        mvp     [!sv_a],(BP+1)
+0BF134                   	
+0BF134 90 24             	        mv      a,[x++]
+0BF136 60 2C             	        cmp     a,02CH          ; ',' obligatoire : il faut DEUX arguments
+0BF138 1A 79             	        jrnz    md_syn
+0BF13A                   	
+0BF13A                   	; --- B, le diviseur ---------------------------------------------------------
+0BF13A 05 6E F2 0E       	        callf   eval            ; expression complete -> (bp+0)
+0BF13E 1C 6B             	        jrc     md_bad
+0BF140 65 00 80          	        test    (BP+0),080H     ; bit 7 : c'est une chaine
+0BF143 1A 78             	        jrnz    md_type
+0BF145 05 D4 FA 0E       	        callf   dec2bin         ; B -> entier 20 bits en (bp+1)..(bp+3)
+0BF149 1C 60             	        jrc     md_bad
+0BF14B 65 00 08          	        test    (BP+0),008H
+0BF14E 1A 77             	        jrnz    md_neg
+0BF150                   	
+0BF150 90 24             	        mv      a,[x++]
+0BF152 60 29             	        cmp     a,029H          ; ')' obligatoire
+0BF154 1A 5D             	        jrnz    md_syn
+0BF156                   	
+0BF156                   	; --- B = 0 : erreur 21, celle que la ROM emploie pour le meme cas (0ECD67h) --
+0BF156 80 01             	        mv      a,(BP+1)
+0BF158 7F 02             	        or      a,(BP+2)
+0BF15A 7F 03             	        or      a,(BP+3)
+0BF15C 18 73             	        jrz     md_zero
+0BF15E                   	
+0BF15E 2C                	        pushu   x               ; le point de reprise de l'interpreteur
+0BF15F                   	
+0BF15F                   	; ============================================================================
+0BF15F                   	; LA DIVISION BINAIRE A RESTAURATION -- 24 tours, tout en RAM interne
+0BF15F                   	; ============================================================================
+0BF15F                   	; Tout tient dans la QUEUE du cadre courant, (bp+4) a (bp+14), dont dec2bin n'a
+0BF15F                   	; plus l'usage. C'est de la RAM interne, donc rapide, et cela reste valable quel
+0BF15F                   	; que soit le cadre ou nous sommes.
+0BF15F                   	;
+0BF15F                   	;   A    : (bp+4),(bp+5),(bp+6)     relu de sv_a ; consomme par le decalage --
+0BF15F                   	;                                   le quotient est jete, MOD n'en veut pas
+0BF15F                   	;   cnt  : (bp+7)                   le compteur de tours
+0BF15F                   	;   rst  : (bp+8),(bp+9),(bp+10)    le reste en construction
+0BF15F                   	;   tmp  : (bp+12),(bp+13),(bp+14)  rst - B, garde s'il n'y a pas d'emprunt
+0BF15F                   	;   B    : (bp+1),(bp+2),(bp+3)     la ou dec2bin vient de le mettre
+0BF15F                   	;
+0BF15F                   	; ⛔ SHL, ET SURTOUT PAS ROL -- C'EST LA QUE MOD RENDAIT 0 POUR TOUT.
+0BF15F                   	;    Sur ce processeur, ROL/ROR sont CIRCULAIRES dans l'octet : la retenue recoit
+0BF15F                   	;    bien le bit sortant, mais ce bit revient aussi en bas du MEME octet, et rien
+0BF15F                   	;    ne passe a l'octet suivant. Une premiere version decalait A avec six « rol » :
+0BF15F                   	;    chaque octet tournait sur lui-meme, le reste ne recevait jamais aucun bit et
+0BF15F                   	;    valait donc 0 -- pour toutes les valeurs, ce qu'a montre la machine.
+0BF15F                   	;
+0BF15F                   	;    LA ROM TRANCHE, ET DANS LES DEUX SENS :
+0BF15F                   	;      . elle CHAINE « shr » sur des octets consecutifs -- « F5 12 F5 13 F5 14
+0BF15F                   	;        F5 15 F5 16 » en 0EEBB8h, un decalage de cinq octets. Seul un decalage
+0BF15F                   	;        A TRAVERS la retenue peut se chainer ainsi ;
+0BF15F                   	;      . et elle emploie « ror » la ou il faut LIRE les bits sans detruire
+0BF15F                   	;        l'octet : bin2dec fait « ror (00Bh) / jrnc » huit fois par octet
+0BF15F                   	;        (0EFBA3h), et huit rotations circulaires le rendent intact.
+0BF15F                   	;    Les deux usages sont coherents, et ils s'excluent.
+0BF15F                   	;
+0BF15F                   	; 📄 Notre propre reference (SC62015_InstructionSet_Reference.md) decrit ROL et
+0BF15F                   	;    SHL de la MEME facon, « via C » -- ce qui ne peut pas etre vrai des deux.
+0BF15F                   	;    A corriger la-bas : la ROM est l'arbitre.
+0BF15F                   	;
+0BF15F                   	; ⛔ ET CES DECALAGES NE CONSULTENT PAS I. bin2dec enchaine « ror (00Bh) / jrnc »
+0BF15F                   	;    alors que IL vaut encore 4 d'un dadl precedent, et n'en rotationne qu'un
+0BF15F                   	;    octet. Les instructions BLOC, elles, bouclent I fois -- « mv il,00Fh /
+0BF15F                   	;    mvl (000h),(00Fh) » de la ROM recopie bien 15 octets.
+0BF15F                   	md_calc:
+0BF15F D2 04 B5 F6 0B    	        mvp     (BP+4),[!sv_a]  ; A, revenu de l'abri
+0BF164 DC 08 00 00 00    	        mvp     (BP+8),000000H  ; reste = 0
+0BF169 CC 07 18          	        mv      (BP+7),00024    ; 24 tours : la largeur de A
+0BF16C                   	md_loop:
+0BF16C 9F                	        rc
+0BF16D F7 04             	        shl     (BP+4)          ; A <<= 1 ; le bit sortant part dans la retenue
+0BF16F F7 05             	        shl     (BP+5)
+0BF171 F7 06             	        shl     (BP+6)
+0BF173 F7 08             	        shl     (BP+8)          ; reste = reste<<1 | ce bit
+0BF175 F7 09             	        shl     (BP+9)
+0BF177 F7 0A             	        shl     (BP+10)
+0BF179                   	
+0BF179 CA 0C 08          	        mvp     (BP+12),(BP+8)  ; tmp = reste
+0BF17C 9F                	        rc                      ; SBCL retranche AUSSI la retenue : la vider
+0BF17D 09 03             	        mv      il,003
+0BF17F 5C 0C 01          	        sbcl    (BP+12),(BP+1)  ; tmp = reste - B, sur trois octets
+0BF182 1C 03             	        jrc     md_next         ; emprunt : reste < B, on ne retranche pas
+0BF184 CA 08 0C          	        mvp     (BP+8),(BP+12)  ; sinon le reste devient tmp
+0BF187                   	md_next:
+0BF187 7D 07             	        dec     (BP+7)
+0BF189 1B 1F             	        jrnz    md_loop
+0BF18B                   	
+0BF18B                   	; --- rendre le reste exactement comme LPEEK rend le sien --------------------
+0BF18B                   	; ⛔ LE DECALAGE DE chknum EST DESORMAIS MESURE, ET NON SUPPOSE. Le module a
+0BF18B                   	;    laisse BP en RAM avant et apres son premier chknum ; releve sur la machine :
+0BF18B                   	;    96h puis 87h, soit QUINZE octets tout rond. Le cadre du resultat est donc
+0BF18B                   	;    celui d'un pmdf +15, et sv_a n'a plus a servir de pont -- ce qui le laisse
+0BF18B                   	;    porter A, donc mesurable a son tour.
+0BF18B                   	; sv_a a rendu A a la boucle : il sert maintenant de pont vers l'autre cadre.
+0BF18B DA B5 F6 0B 08    	        mvp     [!sv_a],(BP+8)          ; le reste, le temps de changer de cadre
+0BF190 30 D0 EC B9 F6 0B 	        mv      (bp_ram),[!sv_bp1]      ; le cadre du resultat, en ABSOLU
+0BF196 CC 00 00          	        mv      (BP+0),000H             ; positif, simple precision
+0BF199 D2 01 B5 F6 0B    	        mvp     (BP+1),[!sv_a]
+0BF19E 05 6F FB 0E       	        callf   bin2dec                 ; -> nombre BASIC en (bp+0)
+0BF1A2 3C                	        popu    x
+0BF1A3 9F                	        rc
+0BF1A4                   	md_ret:
+0BF1A4 07                	        retf
+0BF1A5                   	
+0BF1A5                   	; ============================================================================
+0BF1A5                   	; LES ERREURS
+0BF1A5                   	; ============================================================================
+0BF1A5                   	; ⛔ ON NE COMPTE PAS LES CADRES, ON RESTAURE BP. C'est la ce qui rend ces
+0BF1A5                   	;    sorties sures : rendre l'etat d'avant l'appel est la politique de la ROM
+0BF1A5                   	;    elle-meme (0ECD63h rend ce qu'il a pris avant de signaler l'erreur 21), et
+0BF1A5                   	;    une restauration ABSOLUE ne peut pas se tromper de compte -- meme apres un
+0BF1A5                   	;    dec2bin en echec, qui a deja rendu le sien (LOC_ECB5C : sc / pmdf +15 / ret).
+0BF1A5                   	
+0BF1A5                   	; '(' manquante : la ROM remet le caractere en place avant de se plaindre
+0BF1A5                   	; (LOC_FD619) ; on fait de meme. Rien n'a encore ete pris, ni meme sv_bp0 ecrit.
+0BF1A5                   	md_syn0:
+0BF1A5 7C 04             	        dec     x
+0BF1A7 08 0A             	        mv      a,err_syn
+0BF1A9 97                	        sc
+0BF1AA 07                	        retf
+0BF1AB                   	
+0BF1AB                   	; le second chknum ou son dec2bin a echoue : il porte deja son code d'erreur
+0BF1AB                   	md_bad:
+0BF1AB 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF1B1 97                	        sc
+0BF1B2 07                	        retf
+0BF1B3                   	
+0BF1B3                   	md_syn:
+0BF1B3 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF1B9 08 0A             	        mv      a,err_syn
+0BF1BB 97                	        sc
+0BF1BC 07                	        retf
+0BF1BD                   	
+0BF1BD                   	md_type:
+0BF1BD 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF1C3 08 5A             	        mv      a,err_type      ; une chaine la ou un nombre est attendu
+0BF1C5 97                	        sc
+0BF1C6 07                	        retf
+0BF1C7                   	
+0BF1C7                   	md_neg:
+0BF1C7 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF1CD 08 21             	        mv      a,err_range     ; operande negatif : hors du domaine annonce
+0BF1CF 97                	        sc
+0BF1D0 07                	        retf
+0BF1D1                   	
+0BF1D1                   	md_zero:
+0BF1D1 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF1D7 08 15             	        mv      a,err_div
+0BF1D9 97                	        sc
+0BF1DA 07                	        retf
+0BF1DB                   	
+0BF1DB                   	; ============================================================================
+0BF1DB                   	; PRIMITIVES PARTAGEES
+0BF1DB                   	; ============================================================================
+0BF1DB                   	; rd1str -- lit '(' expr_chaine ')'. CY=0 : chaine sur U, longueur (BP+4).
+0BF1DB                   	;           CY=1 : A = code d'erreur.  APPEL PROCHE.
+0BF1DB                   	rd1str:
+0BF1DB                   	rd_sp:
+0BF1DB 90 24             	        mv      a,[x++]
+0BF1DD 60 20             	        cmp     a,020H
+0BF1DF 19 06             	        jrz     rd_sp
+0BF1E1 60 28             	        cmp     a,028H
+0BF1E3 18 06             	        jrz     rd_ev
+0BF1E5 7C 04             	        dec     x
+0BF1E7 08 0A             	        mv      a,err_syn
+0BF1E9 97                	        sc
+0BF1EA 06                	        ret
+0BF1EB                   	rd_ev:
+0BF1EB 30 D8 B8 F6 0B EC 	        mv      [!sv_bp0],(bp_ram)
+0BF1F1 05 6E F2 0E       	        callf   eval
+0BF1F5 1C 21             	        jrc     rd_er
+0BF1F7 65 00 80          	        test    (BP+0),080H
+0BF1FA 18 10             	        jrz     rd_ty
+0BF1FC 90 24             	        mv      a,[x++]
+0BF1FE 60 29             	        cmp     a,029H
+0BF200 18 14             	        jrz     rd_ok
+0BF202 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF208 08 0A             	        mv      a,err_syn
+0BF20A 97                	        sc
+0BF20B 06                	        ret
+0BF20C                   	rd_ty:
+0BF20C 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF212 08 5A             	        mv      a,err_type
+0BF214 97                	        sc
+0BF215 06                	        ret
+0BF216                   	rd_ok:
+0BF216 9F                	        rc
+0BF217 06                	        ret
+0BF218                   	rd_er:
+0BF218 06                	        ret
+0BF219                   	
+0BF219                   	; ret_str -- finaliseur, CONVENTION DE LEFT$ (LOC_FD7D3, 2026-09-14) : ecrire
+0BF219                   	;   (BP+1)=U et (BP+4)=longueur, garder (BP+0)=080h d'eval, NE PAS TOUCHER BP,
+0BF219                   	;   NI DE pmdf. Le pmdf casse la concatenation (il deseequilibre l'evaluateur
+0BF219                   	;   d'expression). BP doit etre au cadre d'UN SEUL eval a l'entree ici (REPT$,
+0BF219                   	;   qui en fait deux, restaure sv_bp1 avant de venir).
+0BF219                   	; U = base du resultat, IL = longueur.
+0BF219                   	ret_str:
+0BF219 CC 00 80          	        mv      (BP+0),080H
+0BF21C A6 01             	        mv      (BP+1),u
+0BF21E A1 04             	        mv      (BP+4),il
+0BF220 9F                	        rc
+0BF221 07                	        retf
+0BF222                   	
+0BF222                   	st_err:
+0BF222 07                	        retf
+0BF223                   	
+0BF223                   	; ============================================================================
+0BF223                   	; UCASE$ / LCASE$  --  transformation SUR PLACE
+0BF223                   	; ============================================================================
+0BF223 00 00 00          	ucase_m3: db    0,0,0
+0BF226                   	ucase:
+0BF226 04 DB F1          	        call    rd1str
+0BF229 1D 09             	        jrc     st_err
+0BF22B FD 56             	        mv      y,u
+0BF22D 81 04             	        mv      il,(BP+4)
+0BF22F FD 01             	        mv      a,il
+0BF231 60 00             	        cmp     a,000H
+0BF233 18 14             	        jrz     uc_end
+0BF235                   	uc_lp:
+0BF235 90 05             	        mv      a,[y]
+0BF237 60 61             	        cmp     a,061H
+0BF239 1C 06             	        jrc     uc_pt
+0BF23B 60 7B             	        cmp     a,07BH
+0BF23D 1E 02             	        jrnc    uc_pt
+0BF23F 48 20             	        sub     a,020H
+0BF241                   	uc_pt:
+0BF241 B0 05             	        mv      [y],a
+0BF243 6C 05             	        inc     y
+0BF245 7C 01             	        dec     il
+0BF247 1B 14             	        jrnz    uc_lp
+0BF249                   	uc_end:
+0BF249 81 04             	        mv      il,(BP+4)
+0BF24B 02 19 F2          	        jp      ret_str
+0BF24E                   	
+0BF24E 00 00 00          	lcase_m3: db    0,0,0
+0BF251                   	lcase:
+0BF251 04 DB F1          	        call    rd1str
+0BF254 1D 34             	        jrc     st_err
+0BF256 FD 56             	        mv      y,u
+0BF258 81 04             	        mv      il,(BP+4)
+0BF25A FD 01             	        mv      a,il
+0BF25C 60 00             	        cmp     a,000H
+0BF25E 18 14             	        jrz     lc_end
+0BF260                   	lc_lp:
+0BF260 90 05             	        mv      a,[y]
+0BF262 60 41             	        cmp     a,041H
+0BF264 1C 06             	        jrc     lc_pt
+0BF266 60 5B             	        cmp     a,05BH
+0BF268 1E 02             	        jrnc    lc_pt
+0BF26A 40 20             	        add     a,020H
+0BF26C                   	lc_pt:
+0BF26C B0 05             	        mv      [y],a
+0BF26E 6C 05             	        inc     y
+0BF270 7C 01             	        dec     il
+0BF272 1B 14             	        jrnz    lc_lp
+0BF274                   	lc_end:
+0BF274 81 04             	        mv      il,(BP+4)
+0BF276 02 19 F2          	        jp      ret_str
+0BF279                   	
+0BF279                   	; ============================================================================
+0BF279                   	; TRIM$ / LTRIM$ / RTRIM$
+0BF279                   	; ============================================================================
+0BF279                   	; tmode : 0 = les deux, 1 = a gauche, 2 = a droite.
+0BF279                   	; (BP+5) = decalage de debut ; (BP+6) = longueur elaguee ; (BP+4) = longueur d'origine.
+0BF279 00 00 00          	trim_m3:  db    0,0,0
+0BF27C                   	trim:
+0BF27C 08 00             	        mv      a,000H
+0BF27E 12 0C             	        jr      tr_set
+0BF280 00 00 00          	ltrim_m3: db    0,0,0
+0BF283                   	ltrim:
+0BF283 08 01             	        mv      a,001H
+0BF285 12 05             	        jr      tr_set
+0BF287 00 00 00          	rtrim_m3: db    0,0,0
+0BF28A                   	rtrim:
+0BF28A 08 02             	        mv      a,002H
+0BF28C                   	tr_set:
+0BF28C A8 BA F6 0B       	        mv      [!tmode],a
+0BF290 04 DB F1          	        call    rd1str
+0BF293 1D 73             	        jrc     st_err
+0BF295                   	
+0BF295 81 04             	        mv      il,(BP+4)
+0BF297                   	
+0BF297                   	; --- espaces de fin (sauf LTRIM) ---
+0BF297 88 BA F6 0B       	        mv      a,[!tmode]
+0BF29B 60 01             	        cmp     a,001H
+0BF29D 18 19             	        jrz     tr_notrail
+0BF29F FD 56             	        mv      y,u
+0BF2A1 FD 01             	        mv      a,il
+0BF2A3 45 50             	        add     y,a
+0BF2A5                   	tr_trl:
+0BF2A5 FD 01             	        mv      a,il
+0BF2A7 60 00             	        cmp     a,000H
+0BF2A9 18 0D             	        jrz     tr_notrail
+0BF2AB 90 C5 01          	        mv      a,[y-1]
+0BF2AE 60 20             	        cmp     a,020H
+0BF2B0 1A 06             	        jrnz    tr_notrail
+0BF2B2 7C 05             	        dec     y
+0BF2B4 7C 01             	        dec     il
+0BF2B6 13 13             	        jr      tr_trl
+0BF2B8                   	tr_notrail:
+0BF2B8                   	
+0BF2B8                   	; --- espaces de debut (sauf RTRIM) ---
+0BF2B8 CC 05 00          	        mv      (BP+5),000H
+0BF2BB 88 BA F6 0B       	        mv      a,[!tmode]
+0BF2BF 60 02             	        cmp     a,002H
+0BF2C1 18 1A             	        jrz     tr_nolead
+0BF2C3 FD 56             	        mv      y,u
+0BF2C5                   	tr_ld:
+0BF2C5 FD 01             	        mv      a,il
+0BF2C7 60 00             	        cmp     a,000H
+0BF2C9 18 12             	        jrz     tr_nolead
+0BF2CB 90 05             	        mv      a,[y]
+0BF2CD 60 20             	        cmp     a,020H
+0BF2CF 1A 0C             	        jrnz    tr_nolead
+0BF2D1 6C 05             	        inc     y
+0BF2D3 7C 01             	        dec     il
+0BF2D5 80 05             	        mv      a,(BP+5)
+0BF2D7 6C 00             	        inc     a
+0BF2D9 A0 05             	        mv      (BP+5),a
+0BF2DB 13 18             	        jr      tr_ld
+0BF2DD                   	tr_nolead:
+0BF2DD A1 06             	        mv      (BP+6),il
+0BF2DF                   	
+0BF2DF                   	; --- copier la sous-plage AU SOMMET de la zone argument (haut vers bas) ---
+0BF2DF B4 37             	        pushs   x
+0BF2E1 FD 46             	        mv      x,u
+0BF2E3 80 05             	        mv      a,(BP+5)
+0BF2E5 45 40             	        add     x,a
+0BF2E7 80 06             	        mv      a,(BP+6)
+0BF2E9 45 40             	        add     x,a                     ; X = fin de la source
+0BF2EB FD 56             	        mv      y,u
+0BF2ED 80 04             	        mv      a,(BP+4)
+0BF2EF 45 50             	        add     y,a                     ; Y = fin de la destination
+0BF2F1 81 06             	        mv      il,(BP+6)
+0BF2F3 FD 01             	        mv      a,il
+0BF2F5 60 00             	        cmp     a,000H
+0BF2F7 18 08             	        jrz     tr_moved
+0BF2F9                   	tr_cp:
+0BF2F9 90 34             	        mv      a,[--x]
+0BF2FB B0 35             	        mv      [--y],a
+0BF2FD 7C 01             	        dec     il
+0BF2FF 1B 08             	        jrnz    tr_cp
+0BF301                   	tr_moved:
+0BF301 94 27             	        pops    x
+0BF303 80 04             	        mv      a,(BP+4)
+0BF305 4A 06             	        sub     a,(BP+6)
+0BF307 FD 56             	        mv      y,u
+0BF309 45 50             	        add     y,a
+0BF30B FD 65             	        mv      u,y                     ; U = base du resultat
+0BF30D 81 06             	        mv      il,(BP+6)
+0BF30F 02 19 F2          	        jp      ret_str
+0BF312                   	
+0BF312                   	; ============================================================================
+0BF312                   	; REPT$ (nombre, caractere)
+0BF312                   	; ============================================================================
+0BF312                   	; (BP+6) = compte ; (BP+4) = longueur de la chaine caractere ; sv_bp1 = cadre du
+0BF312                   	; 1er eval (celui du resultat).
+0BF312 00 00 00          	rept_m3:  db    0,0,0
+0BF315                   	rept:
+0BF315                   	rp_sp:
+0BF315 90 24             	        mv      a,[x++]
+0BF317 60 20             	        cmp     a,020H
+0BF319 19 06             	        jrz     rp_sp
+0BF31B 60 28             	        cmp     a,028H
+0BF31D 1A 9F             	        jrnz    rp_syn0
+0BF31F 30 D8 B8 F6 0B EC 	        mv      [!sv_bp0],(bp_ram)
+0BF325                   	
+0BF325                   	; --- arg 1 : le NOMBRE (0..255) ---
+0BF325 05 6E F2 0E       	        callf   eval
+0BF329 1C 99             	        jrc     rp_ret
+0BF32B 65 00 80          	        test    (BP+0),080H
+0BF32E 1A 9D             	        jrnz    rp_type
+0BF330 30 D8 B9 F6 0B EC 	        mv      [!sv_bp1],(bp_ram)      ; cadre du resultat
+0BF336 05 D4 FA 0E       	        callf   dec2bin
+0BF33A 1C 88             	        jrc     rp_ret
+0BF33C 65 00 08          	        test    (BP+0),008H
+0BF33F 1A A0             	        jrnz    rp_range
+0BF341 80 02             	        mv      a,(BP+2)
+0BF343 7F 03             	        or      a,(BP+3)
+0BF345 1A 9A             	        jrnz    rp_range
+0BF347 80 01             	        mv      a,(BP+1)
+0BF349 A8 BB F6 0B       	        mv      [!rp_n],a
+0BF34D                   	
+0BF34D 90 24             	        mv      a,[x++]
+0BF34F 60 2C             	        cmp     a,02CH
+0BF351 1A 84             	        jrnz    rp_syn
+0BF353                   	
+0BF353                   	; --- arg 2 : le CARACTERE (chaine, 1er octet) ---
+0BF353 05 6E F2 0E       	        callf   eval
+0BF357 1C 6C             	        jrc     rp_bad
+0BF359 65 00 80          	        test    (BP+0),080H
+0BF35C 18 6F             	        jrz     rp_type
+0BF35E 80 04             	        mv      a,(BP+4)
+0BF360 60 00             	        cmp     a,000H
+0BF362 18 06             	        jrz     rp_ec
+0BF364 FD 56             	        mv      y,u
+0BF366 90 05             	        mv      a,[y]
+0BF368 12 02             	        jr      rp_hc
+0BF36A                   	rp_ec:
+0BF36A 08 20             	        mv      a,020H
+0BF36C                   	rp_hc:
+0BF36C A8 BC F6 0B       	        mv      [!rp_c],a
+0BF370                   	
+0BF370 90 24             	        mv      a,[x++]
+0BF372 60 29             	        cmp     a,029H
+0BF374 1A 61             	        jrnz    rp_syn
+0BF376                   	
+0BF376                   	; --- ajuster U (cadre du 2e eval), remplir ---
+0BF376 88 BB F6 0B       	        mv      a,[!rp_n]
+0BF37A A0 06             	        mv      (BP+6),a                ; compte
+0BF37C 63 04             	        cmp     (BP+4),a                ; len(c$) - n : carry si n>len ; Z si egaux
+0BF37E 18 1F             	        jrz     rp_fill
+0BF380 1E 13             	        jrnc    rp_up
+0BF382                   	; n > len : abaisser U de (n - len)
+0BF382 0A 00 00          	        mv      ba,00000H
+0BF385 80 06             	        mv      a,(BP+6)
+0BF387 4A 04             	        sub     a,(BP+4)                ; BA = n - len
+0BF389 B4 37             	        pushs   x
+0BF38B 05 DD F0 0E       	        callf   alloc
+0BF38F 1C 5A             	        jrc     rp_buf
+0BF391 94 27             	        pops    x
+0BF393 12 0A             	        jr      rp_fill
+0BF395                   	rp_up:
+0BF395 80 04             	        mv      a,(BP+4)
+0BF397 4A 06             	        sub     a,(BP+6)
+0BF399 FD 56             	        mv      y,u
+0BF39B 45 50             	        add     y,a
+0BF39D FD 65             	        mv      u,y
+0BF39F                   	rp_fill:
+0BF39F FD 56             	        mv      y,u
+0BF3A1 81 06             	        mv      il,(BP+6)
+0BF3A3 FD 01             	        mv      a,il
+0BF3A5 60 00             	        cmp     a,000H
+0BF3A7 18 0A             	        jrz     rp_done
+0BF3A9 88 BC F6 0B       	        mv      a,[!rp_c]
+0BF3AD                   	rp_fl:
+0BF3AD B0 25             	        mv      [y++],a
+0BF3AF 7C 01             	        dec     il
+0BF3B1 1B 06             	        jrnz    rp_fl
+0BF3B3                   	rp_done:
+0BF3B3 81 06             	        mv      il,(BP+6)               ; longueur, gardee dans IL
+0BF3B5 30 D0 EC B9 F6 0B 	        mv      (bp_ram),[!sv_bp1]      ; revenir au cadre du 1er eval
+0BF3BB 02 19 F2          	        jp      ret_str
+0BF3BE                   	
+0BF3BE                   	; --- erreurs de REPT$ ---
+0BF3BE                   	rp_syn0:
+0BF3BE 7C 04             	        dec     x
+0BF3C0 08 0A             	        mv      a,err_syn
+0BF3C2 97                	        sc
+0BF3C3 07                	        retf
+0BF3C4                   	rp_ret:
+0BF3C4 07                	        retf
+0BF3C5                   	rp_bad:
+0BF3C5 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF3CB 97                	        sc
+0BF3CC 07                	        retf
+0BF3CD                   	rp_type:
+0BF3CD 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF3D3 08 5A             	        mv      a,err_type
+0BF3D5 97                	        sc
+0BF3D6 07                	        retf
+0BF3D7                   	rp_syn:
+0BF3D7 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF3DD 08 0A             	        mv      a,err_syn
+0BF3DF 97                	        sc
+0BF3E0 07                	        retf
+0BF3E1                   	rp_range:
+0BF3E1 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF3E7 08 21             	        mv      a,err_range
+0BF3E9 97                	        sc
+0BF3EA 07                	        retf
+0BF3EB                   	rp_buf:
+0BF3EB 94 27             	        pops    x
+0BF3ED 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF3F3 08 36             	        mv      a,err_buf
+0BF3F5 97                	        sc
+0BF3F6 07                	        retf
+0BF3F7                   	
+0BF3F7                   	; ============================================================================
+0BF3F7                   	; SREPT$ (nombre, chaine)  --  <nombre> repetitions de la CHAINE ENTIERE
+0BF3F7                   	; ============================================================================
+0BF3F7                   	; SREPT$(3,"ABC") -> "ABCABCABC". resultat = nombre * longueur, <= 255.
+0BF3F7                   	; Comme REPT$ mais copie toute la chaine. La chaine s$ est sur U [U, U+L) ; on
+0BF3F7                   	; abaisse U de (resultlen - L) et on recopie s$ (n-1) fois SOUS la copie du haut
+0BF3F7                   	; (qui est deja s$), pour finir au ras de la pile.
+0BF3F7 00 00 00          	srept_m3: db    0,0,0
+0BF3FA                   	srept:
+0BF3FA                   	sr_sp:
+0BF3FA 90 24             	        mv      a,[x++]
+0BF3FC 60 20             	        cmp     a,020H
+0BF3FE 19 06             	        jrz     sr_sp
+0BF400 60 28             	        cmp     a,028H
+0BF402 1A C8             	        jrnz    sr_syn0
+0BF404 30 D8 B8 F6 0B EC 	        mv      [!sv_bp0],(bp_ram)
+0BF40A 05 6E F2 0E       	        callf   eval                    ; arg1 : nombre
+0BF40E 1C C2             	        jrc     sr_ret
+0BF410 30 D8 B9 F6 0B EC 	        mv      [!sv_bp1],(bp_ram)
+0BF416 65 00 80          	        test    (BP+0),080H
+0BF419 1A C0             	        jrnz    sr_type
+0BF41B 05 D4 FA 0E       	        callf   dec2bin
+0BF41F 1C B1             	        jrc     sr_ret
+0BF421 65 00 08          	        test    (BP+0),008H
+0BF424 1A C9             	        jrnz    sr_range
+0BF426 80 02             	        mv      a,(BP+2)
+0BF428 7F 03             	        or      a,(BP+3)
+0BF42A 1A C3             	        jrnz    sr_range
+0BF42C 80 01             	        mv      a,(BP+1)
+0BF42E A8 C1 F6 0B       	        mv      [!sr_n],a
+0BF432 90 24             	        mv      a,[x++]
+0BF434 60 2C             	        cmp     a,02CH
+0BF436 1A AD             	        jrnz    sr_syn
+0BF438 05 6E F2 0E       	        callf   eval                    ; arg2 : chaine
+0BF43C 1C 95             	        jrc     sr_bad
+0BF43E 65 00 80          	        test    (BP+0),080H
+0BF441 18 98             	        jrz     sr_type
+0BF443 80 04             	        mv      a,(BP+4)
+0BF445 A0 06             	        mv      (BP+6),a                ; L = longueur de la chaine
+0BF447 90 24             	        mv      a,[x++]
+0BF449 60 29             	        cmp     a,029H
+0BF44B 1A 98             	        jrnz    sr_syn
+0BF44D                   	; --- resultlen = n * L, controle <= 255 (dans (BP+5)) ---
+0BF44D 88 C1 F6 0B       	        mv      a,[!sr_n]
+0BF451 A0 05             	        mv      (BP+5),a
+0BF453 81 05             	        mv      il,(BP+5)               ; il = n
+0BF455 CC 05 00          	        mv      (BP+5),000H             ; (BP+5) = accumulateur
+0BF458 FD 01             	        mv      a,il
+0BF45A 60 00             	        cmp     a,000H
+0BF45C 18 0C             	        jrz     sr_lenok                ; n = 0 -> resultlen 0
+0BF45E                   	sr_mul:
+0BF45E 80 05             	        mv      a,(BP+5)
+0BF460 42 06             	        add     a,(BP+6)                ; += L  (0x42 ADD A,(n))
+0BF462 1C 8B             	        jrc     sr_range                ; > 255
+0BF464 A0 05             	        mv      (BP+5),a
+0BF466 7C 01             	        dec     il
+0BF468 1B 0C             	        jrnz    sr_mul
+0BF46A                   	sr_lenok:
+0BF46A                   	; --- ajuster U ; (BP+5)=resultlen, (BP+6)=L ---
+0BF46A 80 05             	        mv      a,(BP+5)
+0BF46C 63 06             	        cmp     (BP+6),a                ; L - resultlen : carry si resultlen>L
+0BF46E 1C 0E             	        jrc     sr_grow
+0BF470 18 4F             	        jrz     sr_done                 ; resultlen = L (n=1) : U inchange
+0BF472                   	; resultlen < L (n=0) : remonter U de (L - resultlen)
+0BF472 80 06             	        mv      a,(BP+6)
+0BF474 4A 05             	        sub     a,(BP+5)
+0BF476 FD 56             	        mv      y,u
+0BF478 45 50             	        add     y,a
+0BF47A FD 65             	        mv      u,y
+0BF47C 12 43             	        jr      sr_done
+0BF47E                   	sr_grow:
+0BF47E AE C3 F6 0B       	        mv      [!sr_src],u             ; Us = base de s$ (copie du haut), avant alloc
+0BF482 0A 00 00          	        mv      ba,00000H
+0BF485 80 05             	        mv      a,(BP+5)
+0BF487 4A 06             	        sub     a,(BP+6)                ; BA = resultlen - L = (n-1)*L
+0BF489 B4 37             	        pushs   x
+0BF48B 05 DD F0 0E       	        callf   alloc
+0BF48F 1C 68             	        jrc     sr_buf
+0BF491 FD 56             	        mv      y,u                     ; dst = nouvelle base
+0BF493 88 C1 F6 0B       	        mv      a,[!sr_n]
+0BF497 7C 00             	        dec     a
+0BF499 A8 C2 F6 0B       	        mv      [!sr_cnt],a             ; n-1 copies a poser sous le haut
+0BF49D                   	sr_oc:
+0BF49D 88 C2 F6 0B       	        mv      a,[!sr_cnt]
+0BF4A1 60 00             	        cmp     a,000H
+0BF4A3 18 1A             	        jrz     sr_grown
+0BF4A5 8C C3 F6 0B       	        mv      x,[!sr_src]             ; src = s$ du haut (intact)
+0BF4A9 81 06             	        mv      il,(BP+6)               ; L
+0BF4AB                   	sr_ic:
+0BF4AB 90 24             	        mv      a,[x++]
+0BF4AD B0 25             	        mv      [y++],a
+0BF4AF 7C 01             	        dec     il
+0BF4B1 1B 08             	        jrnz    sr_ic
+0BF4B3 88 C2 F6 0B       	        mv      a,[!sr_cnt]
+0BF4B7 7C 00             	        dec     a
+0BF4B9 A8 C2 F6 0B       	        mv      [!sr_cnt],a
+0BF4BD 13 22             	        jr      sr_oc
+0BF4BF                   	sr_grown:
+0BF4BF 94 27             	        pops    x
+0BF4C1                   	sr_done:
+0BF4C1 81 05             	        mv      il,(BP+5)               ; longueur du resultat
+0BF4C3 30 D0 EC B9 F6 0B 	        mv      (bp_ram),[!sv_bp1]
+0BF4C9 02 19 F2          	        jp      ret_str
+0BF4CC                   	sr_syn0:
+0BF4CC 7C 04             	        dec     x
+0BF4CE 08 0A             	        mv      a,err_syn
+0BF4D0 97                	        sc
+0BF4D1 07                	        retf
+0BF4D2                   	sr_ret:
+0BF4D2 07                	        retf
+0BF4D3                   	sr_bad:
+0BF4D3 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF4D9 97                	        sc
+0BF4DA 07                	        retf
+0BF4DB                   	sr_type:
+0BF4DB 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF4E1 08 5A             	        mv      a,err_type
+0BF4E3 97                	        sc
+0BF4E4 07                	        retf
+0BF4E5                   	sr_syn:
+0BF4E5 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF4EB 08 0A             	        mv      a,err_syn
+0BF4ED 97                	        sc
+0BF4EE 07                	        retf
+0BF4EF                   	sr_range:
+0BF4EF 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF4F5 08 21             	        mv      a,err_range
+0BF4F7 97                	        sc
+0BF4F8 07                	        retf
+0BF4F9                   	sr_buf:
+0BF4F9 94 27             	        pops    x
+0BF4FB 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF501 08 36             	        mv      a,err_buf
+0BF503 97                	        sc
+0BF504 07                	        retf
+0BF505                   	
+0BF505                   	; ============================================================================
+0BF505                   	; INSTR ([debut,] texte, recherche)  --  position 1-based, 0 si absent
+0BF505                   	; ============================================================================
+0BF505                   	; Rend un NOMBRE (comme LEN/ASC) : lit les chaines, LIBERE les temporaires de U
+0BF505                   	; (add u,longueur, d'apres BAS_LEN 0EECA8h), convertit par bin2dec, BP restaure
+0BF505                   	; au cadre du 1er eval (comme MOD). recherche a U [..LS) ; texte a U+LS [..LT).
+0BF505 00 00 00          	instr_m3: db    0,0,0
+0BF508                   	instr:
+0BF508                   	in_sp:
+0BF508 90 24             	        mv      a,[x++]
+0BF50A 60 20             	        cmp     a,020H
+0BF50C 19 06             	        jrz     in_sp
+0BF50E 60 28             	        cmp     a,028H
+0BF510 1A ED             	        jrnz    in_syn0
+0BF512 30 D8 B8 F6 0B EC 	        mv      [!sv_bp0],(bp_ram)
+0BF518                   	; --- arg 1 : nombre (debut) OU chaine (texte) ---
+0BF518 05 6E F2 0E       	        callf   eval
+0BF51C 1C E7             	        jrc     in_ret
+0BF51E 30 D8 B9 F6 0B EC 	        mv      [!sv_bp1],(bp_ram)
+0BF524 65 00 80          	        test    (BP+0),080H
+0BF527 1A 2E             	        jrnz    in_a1str
+0BF529 05 D4 FA 0E       	        callf   dec2bin             ; debut numerique
+0BF52D 1C D6             	        jrc     in_ret
+0BF52F 65 00 08          	        test    (BP+0),008H
+0BF532 1A EE             	        jrnz    in_range
+0BF534 80 02             	        mv      a,(BP+2)
+0BF536 7F 03             	        or      a,(BP+3)
+0BF538 1A E8             	        jrnz    in_range
+0BF53A 80 01             	        mv      a,(BP+1)
+0BF53C 60 00             	        cmp     a,000H
+0BF53E 18 E2             	        jrz     in_range            ; debut 0 interdit (1-based)
+0BF540 A8 BD F6 0B       	        mv      [!in_start],a
+0BF544 90 24             	        mv      a,[x++]
+0BF546 60 2C             	        cmp     a,02CH
+0BF548 1A CE             	        jrnz    in_syn
+0BF54A 05 6E F2 0E       	        callf   eval                ; texte
+0BF54E 1C B6             	        jrc     in_bad
+0BF550 65 00 80          	        test    (BP+0),080H
+0BF553 18 B9             	        jrz     in_type
+0BF555 12 06             	        jr      in_havetext
+0BF557                   	in_a1str:
+0BF557 08 01             	        mv      a,001H
+0BF559 A8 BD F6 0B       	        mv      [!in_start],a
+0BF55D                   	in_havetext:
+0BF55D 80 04             	        mv      a,(BP+4)
+0BF55F A8 BE F6 0B       	        mv      [!in_lt],a          ; longueur du texte
+0BF563 90 24             	        mv      a,[x++]
+0BF565 60 2C             	        cmp     a,02CH
+0BF567 1A AF             	        jrnz    in_syn
+0BF569 05 6E F2 0E       	        callf   eval                ; recherche
+0BF56D 1C 97             	        jrc     in_bad
+0BF56F 65 00 80          	        test    (BP+0),080H
+0BF572 18 9A             	        jrz     in_type
+0BF574 90 24             	        mv      a,[x++]
+0BF576 60 29             	        cmp     a,029H
+0BF578 1A 9E             	        jrnz    in_syn
+0BF57A                   	; --- recherche : mise en place ---
+0BF57A                   	; (BP+5) = maxp ; (BP+6) = octet temporaire de comparaison ; p en variable module
+0BF57A                   	; (on n'utilise QUE (BP+5)/(BP+6), prouves surs ; le cadre d'eval peut ne pas
+0BF57A                   	;  atteindre (BP+7)).
+0BF57A 88 BE F6 0B       	        mv      a,[!in_lt]
+0BF57E 4A 04             	        sub     a,(BP+4)            ; LT - LS
+0BF580 1C 52             	        jrc     in_notfound         ; LS > LT
+0BF582 A0 05             	        mv      (BP+5),a            ; maxp (0-based)
+0BF584 88 BD F6 0B       	        mv      a,[!in_start]
+0BF588 7C 00             	        dec     a
+0BF58A A8 C0 F6 0B       	        mv      [!in_p],a           ; p = debut - 1
+0BF58E                   	in_outer:
+0BF58E 88 C0 F6 0B       	        mv      a,[!in_p]
+0BF592 63 05             	        cmp     (BP+5),a            ; maxp - p : carry si p>maxp
+0BF594 1C 3E             	        jrc     in_notfound
+0BF596                   	in_cmp:
+0BF596 B4 37             	        pushs   x
+0BF598 FD 46             	        mv      x,u
+0BF59A 80 04             	        mv      a,(BP+4)
+0BF59C 45 40             	        add     x,a
+0BF59E 88 C0 F6 0B       	        mv      a,[!in_p]
+0BF5A2 45 40             	        add     x,a                 ; X = texte + p
+0BF5A4 FD 56             	        mv      y,u                 ; Y = recherche
+0BF5A6 81 04             	        mv      il,(BP+4)
+0BF5A8 FD 01             	        mv      a,il
+0BF5AA 60 00             	        cmp     a,000H
+0BF5AC 18 0E             	        jrz     in_hit              ; recherche vide
+0BF5AE                   	in_ck:
+0BF5AE 90 24             	        mv      a,[x++]
+0BF5B0 A0 06             	        mv      (BP+6),a            ; caractere du texte
+0BF5B2 90 25             	        mv      a,[y++]
+0BF5B4 63 06             	        cmp     (BP+6),a            ; (textchar) - (searchchar) : Z si egaux
+0BF5B6 1A 0E             	        jrnz    in_miss
+0BF5B8 7C 01             	        dec     il
+0BF5BA 1B 0E             	        jrnz    in_ck
+0BF5BC                   	in_hit:
+0BF5BC 94 27             	        pops    x
+0BF5BE 88 C0 F6 0B       	        mv      a,[!in_p]
+0BF5C2 6C 00             	        inc     a
+0BF5C4 12 10             	        jr      in_found
+0BF5C6                   	in_miss:
+0BF5C6 94 27             	        pops    x
+0BF5C8 88 C0 F6 0B       	        mv      a,[!in_p]
+0BF5CC 6C 00             	        inc     a
+0BF5CE A8 C0 F6 0B       	        mv      [!in_p],a
+0BF5D2 13 46             	        jr      in_outer
+0BF5D4                   	in_notfound:
+0BF5D4 08 00             	        mv      a,000H
+0BF5D6                   	in_found:
+0BF5D6 A8 BF F6 0B       	        mv      [!in_res],a
+0BF5DA                   	; --- liberer les deux chaines de U, puis rendre le nombre ---
+0BF5DA 80 04             	        mv      a,(BP+4)
+0BF5DC 45 60             	        add     u,a
+0BF5DE 88 BE F6 0B       	        mv      a,[!in_lt]
+0BF5E2 45 60             	        add     u,a
+0BF5E4 30 D0 EC B9 F6 0B 	        mv      (bp_ram),[!sv_bp1]
+0BF5EA CC 00 00          	        mv      (BP+0),000H
+0BF5ED 88 BF F6 0B       	        mv      a,[!in_res]
+0BF5F1 A0 01             	        mv      (BP+1),a
+0BF5F3 CD 02 00 00       	        mvw     (BP+2),00000H
+0BF5F7 2C                	        pushu   x               ; ⛔ bin2dec ECRASE X (le point de reprise) : le sauver
+0BF5F8 05 6F FB 0E       	        callf   bin2dec
+0BF5FC 3C                	        popu    x
+0BF5FD 9F                	        rc
+0BF5FE 07                	        retf
+0BF5FF                   	in_syn0:
+0BF5FF 7C 04             	        dec     x
+0BF601 08 0A             	        mv      a,err_syn
+0BF603 97                	        sc
+0BF604 07                	        retf
+0BF605                   	in_ret:
+0BF605 07                	        retf
+0BF606                   	in_bad:
+0BF606 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF60C 97                	        sc
+0BF60D 07                	        retf
+0BF60E                   	in_type:
+0BF60E 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF614 08 5A             	        mv      a,err_type
+0BF616 97                	        sc
+0BF617 07                	        retf
+0BF618                   	in_syn:
+0BF618 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF61E 08 0A             	        mv      a,err_syn
+0BF620 97                	        sc
+0BF621 07                	        retf
+0BF622                   	in_range:
+0BF622 30 D0 EC B8 F6 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF628 08 21             	        mv      a,err_range
+0BF62A 97                	        sc
+0BF62B 07                	        retf
+0BF62C                   	
+0BF62C                   	; ============================================================================
+0BF62C                   	; LES QUATRE ENTREES
+0BF62C                   	; ============================================================================
+0BF62C                   	kw_table:
+0BF62C 05 4C 50 45 45 4B 	        db      5,'LPEEK',tk_lp
+0BF632 07                	
+0BF633 05 57 50 45 45 4B 	        db      5,'WPEEK',tk_wp
+0BF639 0A                	
+0BF63A 05 4C 50 4F 4B 45 	        db      5,'LPOKE',tk_lpo
+0BF640 0E                	
+0BF641 03 4D 4F 44 0F    	        db      3,'MOD',tk_mod
+0BF646 06 55 43 41 53 45 	        db      6,'UCASE$',tk_uc
+0BF64C 24 C6             	
+0BF64E 06 4C 43 41 53 45 	        db      6,'LCASE$',tk_lc
+0BF654 24 C7             	
+0BF656 05 54 52 49 4D 24 	        db      5,'TRIM$',tk_tr
+0BF65C C3                	
+0BF65D 06 4C 54 52 49 4D 	        db      6,'LTRIM$',tk_lt
+0BF663 24 C4             	
+0BF665 06 52 54 52 49 4D 	        db      6,'RTRIM$',tk_rt
+0BF66B 24 C5             	
+0BF66D 05 52 45 50 54 24 	        db      5,'REPT$',tk_rp
+0BF673 C8                	
+0BF674 06 53 52 45 50 54 	        db      6,'SREPT$',tk_sr
+0BF67A 24 C9             	
+0BF67C 05 49 4E 53 54 52 	        db      5,'INSTR',tk_in
+0BF682 C2                	
+0BF683 00                	        db      0                       ; fin de table
+0BF684                   	
+0BF684                   	disp_table:
+0BF684                   	; Trois entrees de 4 octets, puis le terminateur. Le quartet haut du 3e octet
+0BF684                   	; d'adresse est un DRAPEAU : 040h = fonction, routine a l'adresse + 3 ; 080h =
+0BF684                   	; instruction, routine a l'adresse telle quelle. LPOKE est du second genre, et
+0BF684                   	; n'a donc pas de prefixe de trois octets.
+0BF684 07                	        db      tk_lp
+0BF685 2C                	        db      lpeek_m3
+0BF686 F0                	        db      lpeek_m3/256
+0BF687 4B                	        db      lpeek_m3/65536+040H
+0BF688 0A                	        db      tk_wp
+0BF689 6E                	        db      wpeek_m3
+0BF68A F0                	        db      wpeek_m3/256
+0BF68B 4B                	        db      wpeek_m3/65536+040H
+0BF68C 0E                	        db      tk_lpo
+0BF68D A4                	        db      lpoke
+0BF68E F0                	        db      lpoke/256
+0BF68F 8B                	        db      lpoke/65536+080H
+0BF690 0F                	        db      tk_mod
+0BF691 00                	        db      modu_m3
+0BF692 F1                	        db      modu_m3/256
+0BF693 4B                	        db      modu_m3/65536+040H
+0BF694 C6 23 F2 4B       	        db      tk_uc, ucase_m3, ucase_m3/256, ucase_m3/65536+040H
+0BF698 C7 4E F2 4B       	        db      tk_lc, lcase_m3, lcase_m3/256, lcase_m3/65536+040H
+0BF69C C3 79 F2 4B       	        db      tk_tr, trim_m3,  trim_m3/256,  trim_m3/65536+040H
+0BF6A0 C4 80 F2 4B       	        db      tk_lt, ltrim_m3, ltrim_m3/256, ltrim_m3/65536+040H
+0BF6A4 C5 87 F2 4B       	        db      tk_rt, rtrim_m3, rtrim_m3/256, rtrim_m3/65536+040H
+0BF6A8 C8 12 F3 4B       	        db      tk_rp, rept_m3,  rept_m3/256,  rept_m3/65536+040H
+0BF6AC C9 F7 F3 4B       	        db      tk_sr, srept_m3, srept_m3/256, srept_m3/65536+040H
+0BF6B0 C2 05 F5 4B       	        db      tk_in, instr_m3, instr_m3/256, instr_m3/65536+040H
+0BF6B4 00                	        db      0                       ; fin de table
+0BF6B5                   	
+0BF6B5                   	; ============================================================================
+0BF6B5                   	; LES CROCHETS D'ORIGINE, pour desinstaller
+0BF6B5                   	; ============================================================================
+0BF6B5                   	; Le premier operande, hors d'atteinte du second chknum. Il n'est PLUS ecrase
+0BF6B5                   	; ensuite : apres un appel, LPEEK &BF1EC rend A tel que dec2bin l'a converti.
+0BF6B5                   	; C'est notre seul point de mesure, et le module doit rester assez court pour
+0BF6B5                   	; que le BASIC ne vienne pas le manger -- le vidage du 2026-09-05 montre du
+0BF6B5                   	; texte BASIC des 0BF1F7h.
+0BF6B5 00 00 00          	sv_a:     db    0,0,0
+0BF6B8 00                	sv_bp0:   db    0             ; BP a l'entree -- l'etat a rendre en erreur
+0BF6B9 00                	sv_bp1:   db    0             ; BP apres la 1re evaluation -- cadre du resultat
+0BF6BA                   	
+0BF6BA                   	; ⛔ LES TROIS TEMOINS DE MESURE ONT ETE RETIRES LE 2026-09-05, une fois MOD
+0BF6BA                   	;    valide sur machine. Ils portaient A et B tels que dec2bin les rendait, et le
+0BF6BA                   	;    reste au sortir de la boucle ; c'est par eux que la cause a ete trouvee deux
+0BF6BA                   	;    fois, la ou le raisonnement s'etait trompe. Les remettre est l'affaire de
+0BF6BA                   	;    trois « mvp [!dbg_x],(BP+n) » et de trois mots de 3 octets -- le faire
+0BF6BA                   	;    plutot que de deviner, si la fonction se remet a mentir.
+0BF6BA                   	
+0BF6BA                   	
+0BF6BA 00                	tmode:    db    0
+0BF6BB 00                	rp_n:     db    0
+0BF6BC 00                	rp_c:     db    0
+0BF6BD 00                	in_start: db    0
+0BF6BE 00                	in_lt:    db    0
+0BF6BF 00                	in_res:   db    0
+0BF6C0 00                	in_p:     db    0
+0BF6C1 00                	sr_n:     db    0
+0BF6C2 00                	sr_cnt:   db    0
+0BF6C3 00 00 00          	sr_src:   db    0,0,0
+0BF6C6 00 00 00          	old_kw:   db    0,0,0
+0BF6C9 00 00 00          	old_disp: db    0,0,0
+0BF6CC                   	
+0BF6CC                   	        end
+
+ - Symbols -
+
+0EF0DDh  alloc
+0000EFh  amc
+0BFCBCh  apo_time
+0000D1h  basptr
+0BFD0Eh  baswrk
+0000D5h  bh
+0EFB6Fh  bin2dec
+0000D4h  bl
+0000ECh  bp_ram
+0000EAh  brkmsk
+0000D7h  ch
+0EFBF3h  chknum
+0000D6h  cl
+0BFC29h  ctrl_disp
+00004Fh  d0_box_fill
+000042h  d0_chars_out_at
+000041h  d0_char_out_at
+000051h  d0_clear_disp
+000052h  d0_clear_from
+000049h  d0_clear_line
+000045h  d0_cursor_type
+000057h  d0_disp_no_clip
+000050h  d0_disp_state
+00004Bh  d0_dot8_read
+00004Ah  d0_dot8_write
+00004Dh  d0_dot_read
+00004Ch  d0_dot_write
+000058h  d0_guide_line
+000054h  d0_insert_line
+00004Eh  d0_line_draw
+000055h  d0_pattern_read
+000056h  d0_pattern_write
+000048h  d0_scroll_down
+000047h  d0_scroll_up
+000044h  d0_set_cursor
+000046h  d0_symbol_disp
+000045h  d1_buffer_clear
+00003Fh  d1_conv_tbl_set
+000046h  d1_fkey_display
+000040h  d1_init_driver
+000044h  d1_key_buf_set
+000043h  d1_key_read
+000041h  d1_matrix_read
+000042h  d1_mtx_rd_nd
+000042h  d2_byte_in
+000041h  d2_byte_out
+000048h  d2_er_high
+000049h  d2_er_low
+00004Bh  d2_read_cd
+00004Ah  d2_read_cs
+000046h  d2_rr_high
+000047h  d2_rr_low
+000044h  d2_rs_high
+000045h  d2_rs_low
+000043h  d2_set_hardware
+000043h  d3_printer_check
+000041h  d3_print_out
+000042h  d3_print_pos
+000042h  d4_data_read
+000043h  d4_data_verify
+000041h  d4_data_write
+000045h  d4_header_read
+000044h  d4_header_write
+000048h  d6_blk_cre_top
+000043h  d6_blk_xfer
+000045h  d6_block_create
+000046h  d6_block_delete
+000044h  d6_block_rename
+000042h  d6_block_resize
+000047h  d6_condense
+000041h  d6_search_phys
+000043h  d8_basic_exec
+000045h  d8_code_addr
+000041h  d8_power_off
+000042h  d8_secure_work
+000055h  d9_abs
+000051h  d9_acos
+000047h  d9_add
+000076h  d9_asc
+000050h  d9_asin
+000052h  d9_atan
+00007Fh  d9_bin2dec
+000077h  d9_chr_s
+00004Eh  d9_cos
+00007Eh  d9_dec2bin
+000053h  d9_deg
+00004Ah  d9_div
+000054h  d9_dms
+00004Ch  d9_exp
+000056h  d9_int
+00005Bh  d9_ln
+00005Ah  d9_log
+000049h  d9_mul
+000044h  d9_num_eq
+000046h  d9_num_ge
+000043h  d9_num_gt
+000045h  d9_num_le
+000042h  d9_num_lt
+000041h  d9_num_ne
+00004Bh  d9_pow
+000058h  d9_rnd
+000057h  d9_sgn
+00004Dh  d9_sin
+000059h  d9_sqr
+000073h  d9_str_eq
+000075h  d9_str_ge
+000072h  d9_str_gt
+000074h  d9_str_le
+000071h  d9_str_lt
+000070h  d9_str_ne
+000078h  d9_str_s
+000048h  d9_sub
+00004Fh  d9_tan
+000079h  d9_val
+0000CEh  datbas
+0EFAD4h  dec2bin
+0BFC7Dh  defdrv
+0BF05Ch  dehors
+0BF09Bh  dehors2
+0BF01Ah  deja_ext
+000000h  dev_display
+000007h  dev_fdd
+000009h  dev_function
+000001h  dev_key
+000006h  dev_memcard
+000005h  dev_memfile
+000003h  dev_printer
+000002h  dev_sio
+000008h  dev_system
+000004h  dev_tape
+0000D9h  dh
+0000DDh  di
+0BF684h  disp_table
+0000D8h  dl
+0BFC96h  dotsop
+0E01C2h  drv_off
+0BFCA2h  d_link
+0000F6h  eih
+0000F5h  eil
+0000F4h  eoh
+0000F3h  eol
+000036h  err_buf
+000015h  err_div
+000021h  err_range
+00000Ah  err_syn
+00005Ah  err_type
+0EF26Eh  eval
+0FFFE4h  fcs_call
+000002h  fcs_close_file
+000000h  fcs_create_file
+00000Eh  fcs_delete_file
+00000Ah  fcs_file_info
+00000Ch  fcs_find_file
+00000Fh  fcs_free_space
+000010h  fcs_init_fcs
+000001h  fcs_open_file
+000003h  fcs_read_block
+000005h  fcs_read_byte
+000008h  fcs_read_byte_nd
+00000Dh  fcs_rename_file
+000009h  fcs_seek
+00000Bh  fcs_set_dir
+000007h  fcs_verify_file
+000004h  fcs_write_block
+000006h  fcs_write_byte
+0BFC87h  font_00_1f
+0BFC90h  font_20_7f
+0BFC8Ah  font_80_9f
+0BFC93h  font_a0_df
+0BFC8Dh  font_e0_ff
+0BFC84h  font_pool_end
+0BFC3Fh  funckey_flag
+0BFC46h  funckey_name
+0BFC45h  funckey_slot
+0BF065h  hors_plage
+0000EBh  iisr
+0000FBh  imr
+0BF508h  instr
+0BF505h  instr_m3
+0BFCD8h  intv_ext
+0BFCC6h  intv_ftimer
+0BFCCFh  intv_onkey
+0BFCD5h  intv_sio_rx
+0BFCD2h  intv_sio_tx
+0BFCDBh  intv_soft
+0BFCC9h  intv_stimer
+0BF557h  in_a1str
+0BF606h  in_bad
+0BF5AEh  in_ck
+0BF596h  in_cmp
+0BF5D6h  in_found
+0BF55Dh  in_havetext
+0BF5BCh  in_hit
+0BF6BEh  in_lt
+0BF5C6h  in_miss
+0BF5D4h  in_notfound
+0BF58Eh  in_outer
+0BF6C0h  in_p
+0BF622h  in_range
+0BF6BFh  in_res
+0BF605h  in_ret
+0BF508h  in_sp
+0BF6BDh  in_start
+0BF618h  in_syn
+0BF5FFh  in_syn0
+0BF60Eh  in_type
+0000E6h  iocsw
+0BFD17h  iocswrk
+0FFFE8h  iocs_call
+0FFFDCh  iocs_call3
+000009h  iocs_char_close
+000008h  iocs_char_open
+000022h  iocs_close_file
+000020h  iocs_create_file
+00002Eh  iocs_delete_file
+000003h  iocs_drive_name
+00002Ah  iocs_file_info
+000000h  iocs_find_drive
+00002Ch  iocs_find_file
+000004h  iocs_fmt_drive
+00003Fh  iocs_format
+00002Fh  iocs_free_space
+000001h  iocs_header_addr
+000002h  iocs_header_next
+000005h  iocs_init_all
+000040h  iocs_init_device
+000010h  iocs_media_check
+000011h  iocs_media_param
+000021h  iocs_open_file
+00000Eh  iocs_rd_byte_nd
+00000Ah  iocs_read_block
+00000Ch  iocs_read_byte
+000012h  iocs_read_sector
+00002Dh  iocs_rename_file
+000017h  iocs_sector_addr
+000029h  iocs_seek
+00002Bh  iocs_set_dir
+000016h  iocs_status_read
+000027h  iocs_verify_file
+000015h  iocs_vfy_sect
+00000Bh  iocs_write_block
+00000Dh  iocs_write_byte
+000013h  iocs_wr_sect
+000014h  iocs_wr_vfy_sect
+0000FCh  isr
+0BFCC0h  keymtx_tbl
+0BFCBFh  keyrep
+0BFC2Dh  keytbl_1b
+0BFC39h  keytbl_1b_ctrl
+0BFC33h  keytbl_1b_shift
+0BFC30h  keytbl_2b
+0BFC3Ch  keytbl_2b_ctrl
+0BFC36h  keytbl_2b_shift
+0BFCCCh  keyvct
+0BFC41h  key_hook1
+0BFCC3h  key_hook2
+0000F2h  ki
+0000F0h  ko
+0000F1h  koh
+0BF62Ch  kw_table
+0BF251h  lcase
+0BF24Eh  lcase_m3
+0000FEh  lcc
+00A004h  lcd1_cmd
+002004h  lcd1_cmd_2000
+00A006h  lcd1_data
+002006h  lcd1_data_2000
+00A007h  lcd1_read
+002007h  lcd1_read_2000
+00A005h  lcd1_stat
+002005h  lcd1_stat_2000
+00A008h  lcd2_cmd
+002008h  lcd2_cmd_2000
+00A00Ah  lcd2_data
+00200Ah  lcd2_data_2000
+00A00Bh  lcd2_read
+00200Bh  lcd2_read_2000
+00A009h  lcd2_stat
+002009h  lcd2_stat_2000
+00A000h  lcd_cmd
+002000h  lcd_cmd_2000
+0BFC9Bh  lcd_crsr_x
+0BFC9Ch  lcd_crsr_y
+00A002h  lcd_data
+002002h  lcd_data_2000
+0BFC9Eh  lcd_height
+0BFCA1h  lcd_mode
+0BFC9Dh  lcd_width
+0BF274h  lc_end
+0BF260h  lc_lp
+0BF26Ch  lc_pt
+0BFC2Ah  linprn
+0BF02Fh  lpeek
+0BF02Ch  lpeek_m3
+0BF0A4h  lpoke
+0BF0EAh  lp_back
+0BF0E9h  lp_done
+0BF0C2h  lp_next
+0BF0F5h  lp_pop
+0BF0F7h  lp_popsyn
+0BF0ECh  lp_ret
+0BF0EDh  lp_syn
+0BF283h  ltrim
+0BF280h  ltrim_m3
+0BF1ABh  md_bad
+0BF15Fh  md_calc
+0BF16Ch  md_loop
+0BF1C7h  md_neg
+0BF187h  md_next
+0BF1A4h  md_ret
+0BF103h  md_sp
+0BF1B3h  md_syn
+0BF1A5h  md_syn0
+0BF1BDh  md_type
+0BF1D1h  md_zero
+0BF103h  modu
+0BF100h  modu_m3
+0BF6C9h  old_disp
+0BF6C6h  old_kw
+0000EDh  px
+0000EEh  py
+0BF1DBh  rd1str
+0BF218h  rd_er
+0BF1EBh  rd_ev
+0BF216h  rd_ok
+0BF1DBh  rd_sp
+0BF20Ch  rd_ty
+0BF05Dh  refus
+0BF09Ch  refus2
+0BFCBBh  repeat_pitch
+0BFCBAh  repeat_wait
+0BF315h  rept
+0BF312h  rept_m3
+0BF219h  ret_str
+0BF3C5h  rp_bad
+0BF3EBh  rp_buf
+0BF6BCh  rp_c
+0BF3B3h  rp_done
+0BF36Ah  rp_ec
+0BF39Fh  rp_fill
+0BF3ADh  rp_fl
+0BF36Ch  rp_hc
+0BF6BBh  rp_n
+0BF3E1h  rp_range
+0BF3C4h  rp_ret
+0BF315h  rp_sp
+0BF3D7h  rp_syn
+0BF3BEh  rp_syn0
+0BF3CDh  rp_type
+0BF395h  rp_up
+0BF28Ah  rtrim
+0BF287h  rtrim_m3
+0000F9h  rxd
+0BFCDEh  s1_btm
+0BFC18h  s1_cap
+0BFC15h  s1_top
+0BFC12h  s2_cap
+0BFC0Fh  s2_top
+0BFC0Ch  s3_cap
+0BFC09h  s3_top
+0000FDh  scr
+0BFC27h  scrn_crsr_x
+0BFC28h  scrn_crsr_y
+0FFFD8h  secure_work_call
+0000DAh  si
+0BFD33h  sio_baud
+0BFD62h  sio_close_data
+0BFD3Bh  sio_crlf
+0BFD3Ch  sio_eof
+0BFD41h  sio_open_ctrl
+0BFD61h  sio_open_data
+0BFD40h  sio_open_wait
+0BFD35h  sio_rx_port_cond
+0BFD36h  sio_rx_port_ctrl
+0BFD34h  sio_setup
+0BFD31h  sio_timer
+0BFD39h  sio_tx_delay
+0BFD37h  sio_tx_port_cond
+0BFD38h  sio_tx_port_ctrl
+0BFCBEh  softint
+0BF3FAh  srept
+0BF3F7h  srept_m3
+0BF4D3h  sr_bad
+0BF4F9h  sr_buf
+0BF6C2h  sr_cnt
+0BF4C1h  sr_done
+0BF47Eh  sr_grow
+0BF4BFh  sr_grown
+0BF4ABh  sr_ic
+0BF46Ah  sr_lenok
+0BF45Eh  sr_mul
+0BF6C1h  sr_n
+0BF49Dh  sr_oc
+0BF4EFh  sr_range
+0BF4D2h  sr_ret
+0BF3FAh  sr_sp
+0BF6C3h  sr_src
+0BF4E5h  sr_syn
+0BF4CCh  sr_syn0
+0BF4DBh  sr_type
+0000FFh  ssr
+0BF000h  start
+0BF222h  st_err
+0BF6B5h  sv_a
+0BF6B8h  sv_bp0
+0BF6B9h  sv_bp1
+0BFCE1h  swork
+0000C2h  tk_in
+0000C7h  tk_lc
+000007h  tk_lp
+00000Eh  tk_lpo
+0000C4h  tk_lt
+00000Fh  tk_mod
+0000C8h  tk_rp
+0000C5h  tk_rt
+0000C9h  tk_sr
+0000C3h  tk_tr
+0000C6h  tk_uc
+00000Ah  tk_wp
+0BF6BAh  tmode
+0BF27Ch  trim
+0BF279h  trim_m3
+0BF2F9h  tr_cp
+0BF2C5h  tr_ld
+0BF301h  tr_moved
+0BF2DDh  tr_nolead
+0BF2B8h  tr_notrail
+0BF28Ch  tr_set
+0BF2A5h  tr_trl
+0000FAh  txd
+0000CBh  txtbas
+0BF226h  ucase
+0BF223h  ucase_m3
+0000F7h  ucr
+0BF249h  uc_end
+0BF235h  uc_lp
+0BF241h  uc_pt
+0000F8h  usr
+0BFD1Ah  usrwrk
+0BF071h  wpeek
+0BF06Eh  wpeek_m3
+
+  No fatal error.  Code: 0BF000h - 0BF6CBh [     1740 byte(s)]

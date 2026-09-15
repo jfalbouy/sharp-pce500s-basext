@@ -1,0 +1,1163 @@
+000000                   	; ============================================================================
+000000                   	; STREXT.ASM -- FONCTIONS CHAINE ajoutees au BASIC (fusionnees dans BASEXT.ASM)
+000000                   	; ============================================================================
+000000                   	; Convention chaine ETABLIE SUR MACHINE le 2026-09-14 :
+000000                   	;
+000000                   	;   LIRE un argument chaine (d'apres SUB_FC613, lecteur de LEFT$) :
+000000                   	;     callf eval ; test (BP+0),080h  (bit 7 = chaine, sinon erreur 90)
+000000                   	;     -> chaine SUR U (adresse = U), longueur en (BP+4). eval a deja pose
+000000                   	;        (BP+0)=080h et (BP+1)=U, et ABAISSE BP de 15 (comme chknum).
+000000                   	;
+000000                   	;   RENDRE une chaine : (BP+0)=080h ; (BP+1)=U ; (BP+4)=IL, avec BP au cadre
+000000                   	;     d'UN SEUL eval (BP d'entree - 15), SANS pmdf -- la convention de LEFT$,
+000000                   	;     dont la fin LOC_FD7D3 n'a aucun pmdf. Le resultat DOIT etre a l'adresse U,
+000000                   	;     IL = sa longueur.
+000000                   	;     ⛔ CET EN-TETE DISAIT « repliquer LOC_FD6F9 : pmdf (bp_ram),0F1h
+000000                   	;        INDISPENSABLE ». FAUX EN GENERAL (corrige le 2026-09-15) : LOC_FD6F9
+000000                   	;        finit CHR$, dont le lecteur a DEJA rendu son cadre (0F5C58h fait
+000000                   	;        pmdf +15) ; son -15 ne fait que le reconstituer. Le ret_str ci-dessous,
+000000                   	;        valide sur machine, n'a pas de pmdf. Ce qui compte est le bilan net.
+000000                   	;        Reference : C:\Claude\BASEXT\MODE-EMPLOI.md §6.1.
+000000                   	;
+000000                   	; ⛔ LE RESULTAT DOIT REMPLACER L'ARGUMENT SUR U, SANS LAISSER DE TROU (sinon la
+000000                   	;    concatenation « "["+TRIM$(...) » corrompt "["). Comme LEFT$ :
+000000                   	;      UCASE$/LCASE$ : transformation SUR PLACE ;
+000000                   	;      TRIM*         : sous-plage copiee AU SOMMET de la zone argument, U remonte ;
+000000                   	;      REPT$         : U ajuste pour finir ou finissait l'argument.
+000000                   	;
+000000                   	; ⛔ REPT$ fait DEUX eval (nombre puis chaine) : chacun abaisse BP de 15. On
+000000                   	;    RESTAURE BP au cadre du 1er eval (sv_bp1) avant de finaliser, comme MOD,
+000000                   	;    pour que le resultat soit au meme cadre que les fonctions a un seul argument.
+000000                   	;
+000000                   	; ⛔ X = point de reprise : on scanne avec Y ; pour une copie a deux pointeurs on
+000000                   	;    sauve X sur la pile SYSTEME. ORDRE IMPOSE : charger, CALL, VERIFIER, saisir.
+000000                   	;
+000000                   	;   PRINT "["+TRIM$ ("  ab  ")+"]"     [ab]
+000000                   	;   PRINT REPT$ (5,"*")                *****
+000000                   	;
+000000                   	;       xasm2026-4 STREXT.ASM -O -L -S -B -K
+000000                   	; ============================================================================
+000000                   	
+000000                   	        include pce500.inc
+000000                   	basptr: equ 0D1H ; POINTEUR (3 octets) vers la zone de travail de l'interpreteur BASIC, en RAM interne. C'est la COPIE de celui que la ROM lit en 0BFD0Eh (baswrk) : elle la fait par mvp (0D1h),[0BFD0Eh] en 0F98CAh. Les crochets d'extension du BAS ...
+000000                   	bp_ram: equ 0ECH ; base pointer RAM interne
+000000                   	
+000000                   	eval:     equ   0EF26EH    ; expression complete ; abaisse BP de 15 ; bit 7 (BP+0)=chaine
+000000                   	dec2bin:  equ   0EFAD4H    ; nombre -> entier 24 bits en (BP+1)..(BP+3)
+000000                   	bin2dec:  equ   0EFB6FH    ; entier (BP+0)..(BP+3) -> nombre BASIC (entree RETF)
+000000                   	alloc:    equ   0EF0DDH    ; reserve BA octets sur U (U -= BA) ; carry = erreur 54
+000000                   	
+000000                   	tk_uc:    equ   0C6H
+000000                   	tk_lc:    equ   0C7H
+000000                   	tk_tr:    equ   0C3H
+000000                   	tk_lt:    equ   0C4H
+000000                   	tk_rt:    equ   0C5H
+000000                   	tk_rp:    equ   0C8H
+000000                   	tk_in:    equ   0C2H       ; INSTR (rend un NOMBRE)
+000000                   	tk_sr:    equ   0C9H       ; SREPT$
+000000                   	
+000000                   	err_syn:  equ   00AH       ; 10 Syntax error
+000000                   	err_type: equ   05AH       ; 90 Type mismatch
+000000                   	err_range: equ  021H       ; 33 Data out of range
+000000                   	err_buf:  equ   036H       ; 54 Buffer space exceeded
+000000                   	
+0BF000                   	        org     0BF000H
+0BF000                   	        pre_on
+0BF000                   	
+0BF000                   	; ============================================================================
+0BF000                   	; INSTALLATION
+0BF000                   	; ============================================================================
+0BF000                   	start:
+0BF000 2C                	        pushu   x
+0BF001 2B                	        pushu   i
+0BF002 30 84 D1          	        mv      x,(basptr)
+0BF005 90 84 92          	        mv      a,[x+092H]
+0BF008 60 0F             	        cmp     a,00FH
+0BF00A 1A 0E             	        jrnz    deja_ext
+0BF00C 95 84 90          	        mv      y,[x+090H]
+0BF00F AD EA F4 0B       	        mv      [old_kw],y
+0BF013 95 84 93          	        mv      y,[x+093H]
+0BF016 AD ED F4 0B       	        mv      [old_disp],y
+0BF01A                   	deja_ext:
+0BF01A 0D 7D F4 0B       	        mv      y,kw_table
+0BF01E B5 84 90          	        mv      [x+090H],y
+0BF021 0D BB F4 0B       	        mv      y,disp_table
+0BF025 B5 84 93          	        mv      [x+093H],y
+0BF028 3B                	        popu    i
+0BF029 3C                	        popu    x
+0BF02A 9F                	        rc
+0BF02B 07                	        retf
+0BF02C                   	
+0BF02C                   	; ============================================================================
+0BF02C                   	; PRIMITIVES PARTAGEES
+0BF02C                   	; ============================================================================
+0BF02C                   	; rd1str -- lit '(' expr_chaine ')'. CY=0 : chaine sur U, longueur (BP+4).
+0BF02C                   	;           CY=1 : A = code d'erreur.  APPEL PROCHE.
+0BF02C                   	rd1str:
+0BF02C                   	rd_sp:
+0BF02C 90 24             	        mv      a,[x++]
+0BF02E 60 20             	        cmp     a,020H
+0BF030 19 06             	        jrz     rd_sp
+0BF032 60 28             	        cmp     a,028H
+0BF034 18 06             	        jrz     rd_ev
+0BF036 7C 04             	        dec     x
+0BF038 08 0A             	        mv      a,err_syn
+0BF03A 97                	        sc
+0BF03B 06                	        ret
+0BF03C                   	rd_ev:
+0BF03C 30 D8 DC F4 0B EC 	        mv      [!sv_bp0],(bp_ram)
+0BF042 05 6E F2 0E       	        callf   eval
+0BF046 1C 21             	        jrc     rd_er
+0BF048 65 00 80          	        test    (BP+0),080H
+0BF04B 18 10             	        jrz     rd_ty
+0BF04D 90 24             	        mv      a,[x++]
+0BF04F 60 29             	        cmp     a,029H
+0BF051 18 14             	        jrz     rd_ok
+0BF053 30 D0 EC DC F4 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF059 08 0A             	        mv      a,err_syn
+0BF05B 97                	        sc
+0BF05C 06                	        ret
+0BF05D                   	rd_ty:
+0BF05D 30 D0 EC DC F4 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF063 08 5A             	        mv      a,err_type
+0BF065 97                	        sc
+0BF066 06                	        ret
+0BF067                   	rd_ok:
+0BF067 9F                	        rc
+0BF068 06                	        ret
+0BF069                   	rd_er:
+0BF069 06                	        ret
+0BF06A                   	
+0BF06A                   	; ret_str -- finaliseur, CONVENTION DE LEFT$ (LOC_FD7D3, 2026-09-14) : ecrire
+0BF06A                   	;   (BP+1)=U et (BP+4)=longueur, garder (BP+0)=080h d'eval, NE PAS TOUCHER BP,
+0BF06A                   	;   NI DE pmdf. Le pmdf casse la concatenation (il deseequilibre l'evaluateur
+0BF06A                   	;   d'expression). BP doit etre au cadre d'UN SEUL eval a l'entree ici (REPT$,
+0BF06A                   	;   qui en fait deux, restaure sv_bp1 avant de venir).
+0BF06A                   	; U = base du resultat, IL = longueur.
+0BF06A                   	ret_str:
+0BF06A CC 00 80          	        mv      (BP+0),080H
+0BF06D A6 01             	        mv      (BP+1),u
+0BF06F A1 04             	        mv      (BP+4),il
+0BF071 9F                	        rc
+0BF072 07                	        retf
+0BF073                   	
+0BF073                   	st_err:
+0BF073 07                	        retf
+0BF074                   	
+0BF074                   	; ============================================================================
+0BF074                   	; UCASE$ / LCASE$  --  transformation SUR PLACE
+0BF074                   	; ============================================================================
+0BF074 00 00 00          	ucase_m3: db    0,0,0
+0BF077                   	ucase:
+0BF077 04 2C F0          	        call    rd1str
+0BF07A 1D 09             	        jrc     st_err
+0BF07C FD 56             	        mv      y,u
+0BF07E 81 04             	        mv      il,(BP+4)
+0BF080 FD 01             	        mv      a,il
+0BF082 60 00             	        cmp     a,000H
+0BF084 18 14             	        jrz     uc_end
+0BF086                   	uc_lp:
+0BF086 90 05             	        mv      a,[y]
+0BF088 60 61             	        cmp     a,061H
+0BF08A 1C 06             	        jrc     uc_pt
+0BF08C 60 7B             	        cmp     a,07BH
+0BF08E 1E 02             	        jrnc    uc_pt
+0BF090 48 20             	        sub     a,020H
+0BF092                   	uc_pt:
+0BF092 B0 05             	        mv      [y],a
+0BF094 6C 05             	        inc     y
+0BF096 7C 01             	        dec     il
+0BF098 1B 14             	        jrnz    uc_lp
+0BF09A                   	uc_end:
+0BF09A 81 04             	        mv      il,(BP+4)
+0BF09C 02 6A F0          	        jp      ret_str
+0BF09F                   	
+0BF09F 00 00 00          	lcase_m3: db    0,0,0
+0BF0A2                   	lcase:
+0BF0A2 04 2C F0          	        call    rd1str
+0BF0A5 1D 34             	        jrc     st_err
+0BF0A7 FD 56             	        mv      y,u
+0BF0A9 81 04             	        mv      il,(BP+4)
+0BF0AB FD 01             	        mv      a,il
+0BF0AD 60 00             	        cmp     a,000H
+0BF0AF 18 14             	        jrz     lc_end
+0BF0B1                   	lc_lp:
+0BF0B1 90 05             	        mv      a,[y]
+0BF0B3 60 41             	        cmp     a,041H
+0BF0B5 1C 06             	        jrc     lc_pt
+0BF0B7 60 5B             	        cmp     a,05BH
+0BF0B9 1E 02             	        jrnc    lc_pt
+0BF0BB 40 20             	        add     a,020H
+0BF0BD                   	lc_pt:
+0BF0BD B0 05             	        mv      [y],a
+0BF0BF 6C 05             	        inc     y
+0BF0C1 7C 01             	        dec     il
+0BF0C3 1B 14             	        jrnz    lc_lp
+0BF0C5                   	lc_end:
+0BF0C5 81 04             	        mv      il,(BP+4)
+0BF0C7 02 6A F0          	        jp      ret_str
+0BF0CA                   	
+0BF0CA                   	; ============================================================================
+0BF0CA                   	; TRIM$ / LTRIM$ / RTRIM$
+0BF0CA                   	; ============================================================================
+0BF0CA                   	; tmode : 0 = les deux, 1 = a gauche, 2 = a droite.
+0BF0CA                   	; (BP+5) = decalage de debut ; (BP+6) = longueur elaguee ; (BP+4) = longueur d'origine.
+0BF0CA 00 00 00          	trim_m3:  db    0,0,0
+0BF0CD                   	trim:
+0BF0CD 08 00             	        mv      a,000H
+0BF0CF 12 0C             	        jr      tr_set
+0BF0D1 00 00 00          	ltrim_m3: db    0,0,0
+0BF0D4                   	ltrim:
+0BF0D4 08 01             	        mv      a,001H
+0BF0D6 12 05             	        jr      tr_set
+0BF0D8 00 00 00          	rtrim_m3: db    0,0,0
+0BF0DB                   	rtrim:
+0BF0DB 08 02             	        mv      a,002H
+0BF0DD                   	tr_set:
+0BF0DD A8 DE F4 0B       	        mv      [!tmode],a
+0BF0E1 04 2C F0          	        call    rd1str
+0BF0E4 1D 73             	        jrc     st_err
+0BF0E6                   	
+0BF0E6 81 04             	        mv      il,(BP+4)
+0BF0E8                   	
+0BF0E8                   	; --- espaces de fin (sauf LTRIM) ---
+0BF0E8 88 DE F4 0B       	        mv      a,[!tmode]
+0BF0EC 60 01             	        cmp     a,001H
+0BF0EE 18 19             	        jrz     tr_notrail
+0BF0F0 FD 56             	        mv      y,u
+0BF0F2 FD 01             	        mv      a,il
+0BF0F4 45 50             	        add     y,a
+0BF0F6                   	tr_trl:
+0BF0F6 FD 01             	        mv      a,il
+0BF0F8 60 00             	        cmp     a,000H
+0BF0FA 18 0D             	        jrz     tr_notrail
+0BF0FC 90 C5 01          	        mv      a,[y-1]
+0BF0FF 60 20             	        cmp     a,020H
+0BF101 1A 06             	        jrnz    tr_notrail
+0BF103 7C 05             	        dec     y
+0BF105 7C 01             	        dec     il
+0BF107 13 13             	        jr      tr_trl
+0BF109                   	tr_notrail:
+0BF109                   	
+0BF109                   	; --- espaces de debut (sauf RTRIM) ---
+0BF109 CC 05 00          	        mv      (BP+5),000H
+0BF10C 88 DE F4 0B       	        mv      a,[!tmode]
+0BF110 60 02             	        cmp     a,002H
+0BF112 18 1A             	        jrz     tr_nolead
+0BF114 FD 56             	        mv      y,u
+0BF116                   	tr_ld:
+0BF116 FD 01             	        mv      a,il
+0BF118 60 00             	        cmp     a,000H
+0BF11A 18 12             	        jrz     tr_nolead
+0BF11C 90 05             	        mv      a,[y]
+0BF11E 60 20             	        cmp     a,020H
+0BF120 1A 0C             	        jrnz    tr_nolead
+0BF122 6C 05             	        inc     y
+0BF124 7C 01             	        dec     il
+0BF126 80 05             	        mv      a,(BP+5)
+0BF128 6C 00             	        inc     a
+0BF12A A0 05             	        mv      (BP+5),a
+0BF12C 13 18             	        jr      tr_ld
+0BF12E                   	tr_nolead:
+0BF12E A1 06             	        mv      (BP+6),il
+0BF130                   	
+0BF130                   	; --- copier la sous-plage AU SOMMET de la zone argument (haut vers bas) ---
+0BF130 B4 37             	        pushs   x
+0BF132 FD 46             	        mv      x,u
+0BF134 80 05             	        mv      a,(BP+5)
+0BF136 45 40             	        add     x,a
+0BF138 80 06             	        mv      a,(BP+6)
+0BF13A 45 40             	        add     x,a                     ; X = fin de la source
+0BF13C FD 56             	        mv      y,u
+0BF13E 80 04             	        mv      a,(BP+4)
+0BF140 45 50             	        add     y,a                     ; Y = fin de la destination
+0BF142 81 06             	        mv      il,(BP+6)
+0BF144 FD 01             	        mv      a,il
+0BF146 60 00             	        cmp     a,000H
+0BF148 18 08             	        jrz     tr_moved
+0BF14A                   	tr_cp:
+0BF14A 90 34             	        mv      a,[--x]
+0BF14C B0 35             	        mv      [--y],a
+0BF14E 7C 01             	        dec     il
+0BF150 1B 08             	        jrnz    tr_cp
+0BF152                   	tr_moved:
+0BF152 94 27             	        pops    x
+0BF154 80 04             	        mv      a,(BP+4)
+0BF156 4A 06             	        sub     a,(BP+6)
+0BF158 FD 56             	        mv      y,u
+0BF15A 45 50             	        add     y,a
+0BF15C FD 65             	        mv      u,y                     ; U = base du resultat
+0BF15E 81 06             	        mv      il,(BP+6)
+0BF160 02 6A F0          	        jp      ret_str
+0BF163                   	
+0BF163                   	; ============================================================================
+0BF163                   	; REPT$ (nombre, caractere)
+0BF163                   	; ============================================================================
+0BF163                   	; (BP+6) = compte ; (BP+4) = longueur de la chaine caractere ; sv_bp1 = cadre du
+0BF163                   	; 1er eval (celui du resultat).
+0BF163 00 00 00          	rept_m3:  db    0,0,0
+0BF166                   	rept:
+0BF166                   	rp_sp:
+0BF166 90 24             	        mv      a,[x++]
+0BF168 60 20             	        cmp     a,020H
+0BF16A 19 06             	        jrz     rp_sp
+0BF16C 60 28             	        cmp     a,028H
+0BF16E 1A 9F             	        jrnz    rp_syn0
+0BF170 30 D8 DC F4 0B EC 	        mv      [!sv_bp0],(bp_ram)
+0BF176                   	
+0BF176                   	; --- arg 1 : le NOMBRE (0..255) ---
+0BF176 05 6E F2 0E       	        callf   eval
+0BF17A 1C 99             	        jrc     rp_ret
+0BF17C 65 00 80          	        test    (BP+0),080H
+0BF17F 1A 9D             	        jrnz    rp_type
+0BF181 30 D8 DD F4 0B EC 	        mv      [!sv_bp1],(bp_ram)      ; cadre du resultat
+0BF187 05 D4 FA 0E       	        callf   dec2bin
+0BF18B 1C 88             	        jrc     rp_ret
+0BF18D 65 00 08          	        test    (BP+0),008H
+0BF190 1A A0             	        jrnz    rp_range
+0BF192 80 02             	        mv      a,(BP+2)
+0BF194 7F 03             	        or      a,(BP+3)
+0BF196 1A 9A             	        jrnz    rp_range
+0BF198 80 01             	        mv      a,(BP+1)
+0BF19A A8 DF F4 0B       	        mv      [!rp_n],a
+0BF19E                   	
+0BF19E 90 24             	        mv      a,[x++]
+0BF1A0 60 2C             	        cmp     a,02CH
+0BF1A2 1A 84             	        jrnz    rp_syn
+0BF1A4                   	
+0BF1A4                   	; --- arg 2 : le CARACTERE (chaine, 1er octet) ---
+0BF1A4 05 6E F2 0E       	        callf   eval
+0BF1A8 1C 6C             	        jrc     rp_bad
+0BF1AA 65 00 80          	        test    (BP+0),080H
+0BF1AD 18 6F             	        jrz     rp_type
+0BF1AF 80 04             	        mv      a,(BP+4)
+0BF1B1 60 00             	        cmp     a,000H
+0BF1B3 18 06             	        jrz     rp_ec
+0BF1B5 FD 56             	        mv      y,u
+0BF1B7 90 05             	        mv      a,[y]
+0BF1B9 12 02             	        jr      rp_hc
+0BF1BB                   	rp_ec:
+0BF1BB 08 20             	        mv      a,020H
+0BF1BD                   	rp_hc:
+0BF1BD A8 E0 F4 0B       	        mv      [!rp_c],a
+0BF1C1                   	
+0BF1C1 90 24             	        mv      a,[x++]
+0BF1C3 60 29             	        cmp     a,029H
+0BF1C5 1A 61             	        jrnz    rp_syn
+0BF1C7                   	
+0BF1C7                   	; --- ajuster U (cadre du 2e eval), remplir ---
+0BF1C7 88 DF F4 0B       	        mv      a,[!rp_n]
+0BF1CB A0 06             	        mv      (BP+6),a                ; compte
+0BF1CD 63 04             	        cmp     (BP+4),a                ; len(c$) - n : carry si n>len ; Z si egaux
+0BF1CF 18 1F             	        jrz     rp_fill
+0BF1D1 1E 13             	        jrnc    rp_up
+0BF1D3                   	; n > len : abaisser U de (n - len)
+0BF1D3 0A 00 00          	        mv      ba,00000H
+0BF1D6 80 06             	        mv      a,(BP+6)
+0BF1D8 4A 04             	        sub     a,(BP+4)                ; BA = n - len
+0BF1DA B4 37             	        pushs   x
+0BF1DC 05 DD F0 0E       	        callf   alloc
+0BF1E0 1C 5A             	        jrc     rp_buf
+0BF1E2 94 27             	        pops    x
+0BF1E4 12 0A             	        jr      rp_fill
+0BF1E6                   	rp_up:
+0BF1E6 80 04             	        mv      a,(BP+4)
+0BF1E8 4A 06             	        sub     a,(BP+6)
+0BF1EA FD 56             	        mv      y,u
+0BF1EC 45 50             	        add     y,a
+0BF1EE FD 65             	        mv      u,y
+0BF1F0                   	rp_fill:
+0BF1F0 FD 56             	        mv      y,u
+0BF1F2 81 06             	        mv      il,(BP+6)
+0BF1F4 FD 01             	        mv      a,il
+0BF1F6 60 00             	        cmp     a,000H
+0BF1F8 18 0A             	        jrz     rp_done
+0BF1FA 88 E0 F4 0B       	        mv      a,[!rp_c]
+0BF1FE                   	rp_fl:
+0BF1FE B0 25             	        mv      [y++],a
+0BF200 7C 01             	        dec     il
+0BF202 1B 06             	        jrnz    rp_fl
+0BF204                   	rp_done:
+0BF204 81 06             	        mv      il,(BP+6)               ; longueur, gardee dans IL
+0BF206 30 D0 EC DD F4 0B 	        mv      (bp_ram),[!sv_bp1]      ; revenir au cadre du 1er eval
+0BF20C 02 6A F0          	        jp      ret_str
+0BF20F                   	
+0BF20F                   	; --- erreurs de REPT$ ---
+0BF20F                   	rp_syn0:
+0BF20F 7C 04             	        dec     x
+0BF211 08 0A             	        mv      a,err_syn
+0BF213 97                	        sc
+0BF214 07                	        retf
+0BF215                   	rp_ret:
+0BF215 07                	        retf
+0BF216                   	rp_bad:
+0BF216 30 D0 EC DC F4 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF21C 97                	        sc
+0BF21D 07                	        retf
+0BF21E                   	rp_type:
+0BF21E 30 D0 EC DC F4 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF224 08 5A             	        mv      a,err_type
+0BF226 97                	        sc
+0BF227 07                	        retf
+0BF228                   	rp_syn:
+0BF228 30 D0 EC DC F4 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF22E 08 0A             	        mv      a,err_syn
+0BF230 97                	        sc
+0BF231 07                	        retf
+0BF232                   	rp_range:
+0BF232 30 D0 EC DC F4 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF238 08 21             	        mv      a,err_range
+0BF23A 97                	        sc
+0BF23B 07                	        retf
+0BF23C                   	rp_buf:
+0BF23C 94 27             	        pops    x
+0BF23E 30 D0 EC DC F4 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF244 08 36             	        mv      a,err_buf
+0BF246 97                	        sc
+0BF247 07                	        retf
+0BF248                   	
+0BF248                   	; ============================================================================
+0BF248                   	; SREPT$ (nombre, chaine)  --  <nombre> repetitions de la CHAINE ENTIERE
+0BF248                   	; ============================================================================
+0BF248                   	; SREPT$(3,"ABC") -> "ABCABCABC". resultat = nombre * longueur, <= 255.
+0BF248                   	; Comme REPT$ mais copie toute la chaine. La chaine s$ est sur U [U, U+L) ; on
+0BF248                   	; abaisse U de (resultlen - L) et on recopie s$ (n-1) fois SOUS la copie du haut
+0BF248                   	; (qui est deja s$), pour finir au ras de la pile.
+0BF248 00 00 00          	srept_m3: db    0,0,0
+0BF24B                   	srept:
+0BF24B                   	sr_sp:
+0BF24B 90 24             	        mv      a,[x++]
+0BF24D 60 20             	        cmp     a,020H
+0BF24F 19 06             	        jrz     sr_sp
+0BF251 60 28             	        cmp     a,028H
+0BF253 1A C8             	        jrnz    sr_syn0
+0BF255 30 D8 DC F4 0B EC 	        mv      [!sv_bp0],(bp_ram)
+0BF25B 05 6E F2 0E       	        callf   eval                    ; arg1 : nombre
+0BF25F 1C C2             	        jrc     sr_ret
+0BF261 30 D8 DD F4 0B EC 	        mv      [!sv_bp1],(bp_ram)
+0BF267 65 00 80          	        test    (BP+0),080H
+0BF26A 1A C0             	        jrnz    sr_type
+0BF26C 05 D4 FA 0E       	        callf   dec2bin
+0BF270 1C B1             	        jrc     sr_ret
+0BF272 65 00 08          	        test    (BP+0),008H
+0BF275 1A C9             	        jrnz    sr_range
+0BF277 80 02             	        mv      a,(BP+2)
+0BF279 7F 03             	        or      a,(BP+3)
+0BF27B 1A C3             	        jrnz    sr_range
+0BF27D 80 01             	        mv      a,(BP+1)
+0BF27F A8 E5 F4 0B       	        mv      [!sr_n],a
+0BF283 90 24             	        mv      a,[x++]
+0BF285 60 2C             	        cmp     a,02CH
+0BF287 1A AD             	        jrnz    sr_syn
+0BF289 05 6E F2 0E       	        callf   eval                    ; arg2 : chaine
+0BF28D 1C 95             	        jrc     sr_bad
+0BF28F 65 00 80          	        test    (BP+0),080H
+0BF292 18 98             	        jrz     sr_type
+0BF294 80 04             	        mv      a,(BP+4)
+0BF296 A0 06             	        mv      (BP+6),a                ; L = longueur de la chaine
+0BF298 90 24             	        mv      a,[x++]
+0BF29A 60 29             	        cmp     a,029H
+0BF29C 1A 98             	        jrnz    sr_syn
+0BF29E                   	; --- resultlen = n * L, controle <= 255 (dans (BP+5)) ---
+0BF29E 88 E5 F4 0B       	        mv      a,[!sr_n]
+0BF2A2 A0 05             	        mv      (BP+5),a
+0BF2A4 81 05             	        mv      il,(BP+5)               ; il = n
+0BF2A6 CC 05 00          	        mv      (BP+5),000H             ; (BP+5) = accumulateur
+0BF2A9 FD 01             	        mv      a,il
+0BF2AB 60 00             	        cmp     a,000H
+0BF2AD 18 0C             	        jrz     sr_lenok                ; n = 0 -> resultlen 0
+0BF2AF                   	sr_mul:
+0BF2AF 80 05             	        mv      a,(BP+5)
+0BF2B1 42 06             	        add     a,(BP+6)                ; += L  (0x42 ADD A,(n))
+0BF2B3 1C 8B             	        jrc     sr_range                ; > 255
+0BF2B5 A0 05             	        mv      (BP+5),a
+0BF2B7 7C 01             	        dec     il
+0BF2B9 1B 0C             	        jrnz    sr_mul
+0BF2BB                   	sr_lenok:
+0BF2BB                   	; --- ajuster U ; (BP+5)=resultlen, (BP+6)=L ---
+0BF2BB 80 05             	        mv      a,(BP+5)
+0BF2BD 63 06             	        cmp     (BP+6),a                ; L - resultlen : carry si resultlen>L
+0BF2BF 1C 0E             	        jrc     sr_grow
+0BF2C1 18 4F             	        jrz     sr_done                 ; resultlen = L (n=1) : U inchange
+0BF2C3                   	; resultlen < L (n=0) : remonter U de (L - resultlen)
+0BF2C3 80 06             	        mv      a,(BP+6)
+0BF2C5 4A 05             	        sub     a,(BP+5)
+0BF2C7 FD 56             	        mv      y,u
+0BF2C9 45 50             	        add     y,a
+0BF2CB FD 65             	        mv      u,y
+0BF2CD 12 43             	        jr      sr_done
+0BF2CF                   	sr_grow:
+0BF2CF AE E7 F4 0B       	        mv      [!sr_src],u             ; Us = base de s$ (copie du haut), avant alloc
+0BF2D3 0A 00 00          	        mv      ba,00000H
+0BF2D6 80 05             	        mv      a,(BP+5)
+0BF2D8 4A 06             	        sub     a,(BP+6)                ; BA = resultlen - L = (n-1)*L
+0BF2DA B4 37             	        pushs   x
+0BF2DC 05 DD F0 0E       	        callf   alloc
+0BF2E0 1C 68             	        jrc     sr_buf
+0BF2E2 FD 56             	        mv      y,u                     ; dst = nouvelle base
+0BF2E4 88 E5 F4 0B       	        mv      a,[!sr_n]
+0BF2E8 7C 00             	        dec     a
+0BF2EA A8 E6 F4 0B       	        mv      [!sr_cnt],a             ; n-1 copies a poser sous le haut
+0BF2EE                   	sr_oc:
+0BF2EE 88 E6 F4 0B       	        mv      a,[!sr_cnt]
+0BF2F2 60 00             	        cmp     a,000H
+0BF2F4 18 1A             	        jrz     sr_grown
+0BF2F6 8C E7 F4 0B       	        mv      x,[!sr_src]             ; src = s$ du haut (intact)
+0BF2FA 81 06             	        mv      il,(BP+6)               ; L
+0BF2FC                   	sr_ic:
+0BF2FC 90 24             	        mv      a,[x++]
+0BF2FE B0 25             	        mv      [y++],a
+0BF300 7C 01             	        dec     il
+0BF302 1B 08             	        jrnz    sr_ic
+0BF304 88 E6 F4 0B       	        mv      a,[!sr_cnt]
+0BF308 7C 00             	        dec     a
+0BF30A A8 E6 F4 0B       	        mv      [!sr_cnt],a
+0BF30E 13 22             	        jr      sr_oc
+0BF310                   	sr_grown:
+0BF310 94 27             	        pops    x
+0BF312                   	sr_done:
+0BF312 81 05             	        mv      il,(BP+5)               ; longueur du resultat
+0BF314 30 D0 EC DD F4 0B 	        mv      (bp_ram),[!sv_bp1]
+0BF31A 02 6A F0          	        jp      ret_str
+0BF31D                   	sr_syn0:
+0BF31D 7C 04             	        dec     x
+0BF31F 08 0A             	        mv      a,err_syn
+0BF321 97                	        sc
+0BF322 07                	        retf
+0BF323                   	sr_ret:
+0BF323 07                	        retf
+0BF324                   	sr_bad:
+0BF324 30 D0 EC DC F4 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF32A 97                	        sc
+0BF32B 07                	        retf
+0BF32C                   	sr_type:
+0BF32C 30 D0 EC DC F4 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF332 08 5A             	        mv      a,err_type
+0BF334 97                	        sc
+0BF335 07                	        retf
+0BF336                   	sr_syn:
+0BF336 30 D0 EC DC F4 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF33C 08 0A             	        mv      a,err_syn
+0BF33E 97                	        sc
+0BF33F 07                	        retf
+0BF340                   	sr_range:
+0BF340 30 D0 EC DC F4 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF346 08 21             	        mv      a,err_range
+0BF348 97                	        sc
+0BF349 07                	        retf
+0BF34A                   	sr_buf:
+0BF34A 94 27             	        pops    x
+0BF34C 30 D0 EC DC F4 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF352 08 36             	        mv      a,err_buf
+0BF354 97                	        sc
+0BF355 07                	        retf
+0BF356                   	
+0BF356                   	; ============================================================================
+0BF356                   	; INSTR ([debut,] texte, recherche)  --  position 1-based, 0 si absent
+0BF356                   	; ============================================================================
+0BF356                   	; Rend un NOMBRE (comme LEN/ASC) : lit les chaines, LIBERE les temporaires de U
+0BF356                   	; (add u,longueur, d'apres BAS_LEN 0EECA8h), convertit par bin2dec, BP restaure
+0BF356                   	; au cadre du 1er eval (comme MOD). recherche a U [..LS) ; texte a U+LS [..LT).
+0BF356 00 00 00          	instr_m3: db    0,0,0
+0BF359                   	instr:
+0BF359                   	in_sp:
+0BF359 90 24             	        mv      a,[x++]
+0BF35B 60 20             	        cmp     a,020H
+0BF35D 19 06             	        jrz     in_sp
+0BF35F 60 28             	        cmp     a,028H
+0BF361 1A ED             	        jrnz    in_syn0
+0BF363 30 D8 DC F4 0B EC 	        mv      [!sv_bp0],(bp_ram)
+0BF369                   	; --- arg 1 : nombre (debut) OU chaine (texte) ---
+0BF369 05 6E F2 0E       	        callf   eval
+0BF36D 1C E7             	        jrc     in_ret
+0BF36F 30 D8 DD F4 0B EC 	        mv      [!sv_bp1],(bp_ram)
+0BF375 65 00 80          	        test    (BP+0),080H
+0BF378 1A 2E             	        jrnz    in_a1str
+0BF37A 05 D4 FA 0E       	        callf   dec2bin             ; debut numerique
+0BF37E 1C D6             	        jrc     in_ret
+0BF380 65 00 08          	        test    (BP+0),008H
+0BF383 1A EE             	        jrnz    in_range
+0BF385 80 02             	        mv      a,(BP+2)
+0BF387 7F 03             	        or      a,(BP+3)
+0BF389 1A E8             	        jrnz    in_range
+0BF38B 80 01             	        mv      a,(BP+1)
+0BF38D 60 00             	        cmp     a,000H
+0BF38F 18 E2             	        jrz     in_range            ; debut 0 interdit (1-based)
+0BF391 A8 E1 F4 0B       	        mv      [!in_start],a
+0BF395 90 24             	        mv      a,[x++]
+0BF397 60 2C             	        cmp     a,02CH
+0BF399 1A CE             	        jrnz    in_syn
+0BF39B 05 6E F2 0E       	        callf   eval                ; texte
+0BF39F 1C B6             	        jrc     in_bad
+0BF3A1 65 00 80          	        test    (BP+0),080H
+0BF3A4 18 B9             	        jrz     in_type
+0BF3A6 12 06             	        jr      in_havetext
+0BF3A8                   	in_a1str:
+0BF3A8 08 01             	        mv      a,001H
+0BF3AA A8 E1 F4 0B       	        mv      [!in_start],a
+0BF3AE                   	in_havetext:
+0BF3AE 80 04             	        mv      a,(BP+4)
+0BF3B0 A8 E2 F4 0B       	        mv      [!in_lt],a          ; longueur du texte
+0BF3B4 90 24             	        mv      a,[x++]
+0BF3B6 60 2C             	        cmp     a,02CH
+0BF3B8 1A AF             	        jrnz    in_syn
+0BF3BA 05 6E F2 0E       	        callf   eval                ; recherche
+0BF3BE 1C 97             	        jrc     in_bad
+0BF3C0 65 00 80          	        test    (BP+0),080H
+0BF3C3 18 9A             	        jrz     in_type
+0BF3C5 90 24             	        mv      a,[x++]
+0BF3C7 60 29             	        cmp     a,029H
+0BF3C9 1A 9E             	        jrnz    in_syn
+0BF3CB                   	; --- recherche : mise en place ---
+0BF3CB                   	; (BP+5) = maxp ; (BP+6) = octet temporaire de comparaison ; p en variable module
+0BF3CB                   	; (on n'utilise QUE (BP+5)/(BP+6), prouves surs ; le cadre d'eval peut ne pas
+0BF3CB                   	;  atteindre (BP+7)).
+0BF3CB 88 E2 F4 0B       	        mv      a,[!in_lt]
+0BF3CF 4A 04             	        sub     a,(BP+4)            ; LT - LS
+0BF3D1 1C 52             	        jrc     in_notfound         ; LS > LT
+0BF3D3 A0 05             	        mv      (BP+5),a            ; maxp (0-based)
+0BF3D5 88 E1 F4 0B       	        mv      a,[!in_start]
+0BF3D9 7C 00             	        dec     a
+0BF3DB A8 E4 F4 0B       	        mv      [!in_p],a           ; p = debut - 1
+0BF3DF                   	in_outer:
+0BF3DF 88 E4 F4 0B       	        mv      a,[!in_p]
+0BF3E3 63 05             	        cmp     (BP+5),a            ; maxp - p : carry si p>maxp
+0BF3E5 1C 3E             	        jrc     in_notfound
+0BF3E7                   	in_cmp:
+0BF3E7 B4 37             	        pushs   x
+0BF3E9 FD 46             	        mv      x,u
+0BF3EB 80 04             	        mv      a,(BP+4)
+0BF3ED 45 40             	        add     x,a
+0BF3EF 88 E4 F4 0B       	        mv      a,[!in_p]
+0BF3F3 45 40             	        add     x,a                 ; X = texte + p
+0BF3F5 FD 56             	        mv      y,u                 ; Y = recherche
+0BF3F7 81 04             	        mv      il,(BP+4)
+0BF3F9 FD 01             	        mv      a,il
+0BF3FB 60 00             	        cmp     a,000H
+0BF3FD 18 0E             	        jrz     in_hit              ; recherche vide
+0BF3FF                   	in_ck:
+0BF3FF 90 24             	        mv      a,[x++]
+0BF401 A0 06             	        mv      (BP+6),a            ; caractere du texte
+0BF403 90 25             	        mv      a,[y++]
+0BF405 63 06             	        cmp     (BP+6),a            ; (textchar) - (searchchar) : Z si egaux
+0BF407 1A 0E             	        jrnz    in_miss
+0BF409 7C 01             	        dec     il
+0BF40B 1B 0E             	        jrnz    in_ck
+0BF40D                   	in_hit:
+0BF40D 94 27             	        pops    x
+0BF40F 88 E4 F4 0B       	        mv      a,[!in_p]
+0BF413 6C 00             	        inc     a
+0BF415 12 10             	        jr      in_found
+0BF417                   	in_miss:
+0BF417 94 27             	        pops    x
+0BF419 88 E4 F4 0B       	        mv      a,[!in_p]
+0BF41D 6C 00             	        inc     a
+0BF41F A8 E4 F4 0B       	        mv      [!in_p],a
+0BF423 13 46             	        jr      in_outer
+0BF425                   	in_notfound:
+0BF425 08 00             	        mv      a,000H
+0BF427                   	in_found:
+0BF427 A8 E3 F4 0B       	        mv      [!in_res],a
+0BF42B                   	; --- liberer les deux chaines de U, puis rendre le nombre ---
+0BF42B 80 04             	        mv      a,(BP+4)
+0BF42D 45 60             	        add     u,a
+0BF42F 88 E2 F4 0B       	        mv      a,[!in_lt]
+0BF433 45 60             	        add     u,a
+0BF435 30 D0 EC DD F4 0B 	        mv      (bp_ram),[!sv_bp1]
+0BF43B CC 00 00          	        mv      (BP+0),000H
+0BF43E 88 E3 F4 0B       	        mv      a,[!in_res]
+0BF442 A0 01             	        mv      (BP+1),a
+0BF444 CD 02 00 00       	        mvw     (BP+2),00000H
+0BF448 2C                	        pushu   x               ; ⛔ bin2dec ECRASE X (le point de reprise) : le sauver
+0BF449 05 6F FB 0E       	        callf   bin2dec
+0BF44D 3C                	        popu    x
+0BF44E 9F                	        rc
+0BF44F 07                	        retf
+0BF450                   	in_syn0:
+0BF450 7C 04             	        dec     x
+0BF452 08 0A             	        mv      a,err_syn
+0BF454 97                	        sc
+0BF455 07                	        retf
+0BF456                   	in_ret:
+0BF456 07                	        retf
+0BF457                   	in_bad:
+0BF457 30 D0 EC DC F4 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF45D 97                	        sc
+0BF45E 07                	        retf
+0BF45F                   	in_type:
+0BF45F 30 D0 EC DC F4 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF465 08 5A             	        mv      a,err_type
+0BF467 97                	        sc
+0BF468 07                	        retf
+0BF469                   	in_syn:
+0BF469 30 D0 EC DC F4 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF46F 08 0A             	        mv      a,err_syn
+0BF471 97                	        sc
+0BF472 07                	        retf
+0BF473                   	in_range:
+0BF473 30 D0 EC DC F4 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF479 08 21             	        mv      a,err_range
+0BF47B 97                	        sc
+0BF47C 07                	        retf
+0BF47D                   	
+0BF47D                   	; ============================================================================
+0BF47D                   	; TABLES
+0BF47D                   	; ============================================================================
+0BF47D                   	kw_table:
+0BF47D 06 55 43 41 53 45 	        db      6,'UCASE$',tk_uc
+0BF483 24 C6             	
+0BF485 06 4C 43 41 53 45 	        db      6,'LCASE$',tk_lc
+0BF48B 24 C7             	
+0BF48D 05 54 52 49 4D 24 	        db      5,'TRIM$',tk_tr
+0BF493 C3                	
+0BF494 06 4C 54 52 49 4D 	        db      6,'LTRIM$',tk_lt
+0BF49A 24 C4             	
+0BF49C 06 52 54 52 49 4D 	        db      6,'RTRIM$',tk_rt
+0BF4A2 24 C5             	
+0BF4A4 05 52 45 50 54 24 	        db      5,'REPT$',tk_rp
+0BF4AA C8                	
+0BF4AB 06 53 52 45 50 54 	        db      6,'SREPT$',tk_sr
+0BF4B1 24 C9             	
+0BF4B3 05 49 4E 53 54 52 	        db      5,'INSTR',tk_in
+0BF4B9 C2                	
+0BF4BA 00                	        db      0
+0BF4BB                   	
+0BF4BB                   	disp_table:
+0BF4BB C6 74 F0 4B       	        db      tk_uc, ucase_m3, ucase_m3/256, ucase_m3/65536+040H
+0BF4BF C7 9F F0 4B       	        db      tk_lc, lcase_m3, lcase_m3/256, lcase_m3/65536+040H
+0BF4C3 C3 CA F0 4B       	        db      tk_tr, trim_m3,  trim_m3/256,  trim_m3/65536+040H
+0BF4C7 C4 D1 F0 4B       	        db      tk_lt, ltrim_m3, ltrim_m3/256, ltrim_m3/65536+040H
+0BF4CB C5 D8 F0 4B       	        db      tk_rt, rtrim_m3, rtrim_m3/256, rtrim_m3/65536+040H
+0BF4CF C8 63 F1 4B       	        db      tk_rp, rept_m3,  rept_m3/256,  rept_m3/65536+040H
+0BF4D3 C9 48 F2 4B       	        db      tk_sr, srept_m3, srept_m3/256, srept_m3/65536+040H
+0BF4D7 C2 56 F3 4B       	        db      tk_in, instr_m3, instr_m3/256, instr_m3/65536+040H
+0BF4DB 00                	        db      0
+0BF4DC                   	
+0BF4DC                   	; ============================================================================
+0BF4DC                   	; VARIABLES DU MODULE
+0BF4DC                   	; ============================================================================
+0BF4DC 00                	sv_bp0:   db    0
+0BF4DD 00                	sv_bp1:   db    0
+0BF4DE 00                	tmode:    db    0
+0BF4DF 00                	rp_n:     db    0
+0BF4E0 00                	rp_c:     db    0
+0BF4E1 00                	in_start: db    0
+0BF4E2 00                	in_lt:    db    0
+0BF4E3 00                	in_res:   db    0
+0BF4E4 00                	in_p:     db    0
+0BF4E5 00                	sr_n:     db    0
+0BF4E6 00                	sr_cnt:   db    0
+0BF4E7 00 00 00          	sr_src:   db    0,0,0
+0BF4EA 00 00 00          	old_kw:   db    0,0,0
+0BF4ED 00 00 00          	old_disp: db    0,0,0
+0BF4F0                   	
+0BF4F0                   	        end
+
+ - Symbols -
+
+0EF0DDh  alloc
+0000EFh  amc
+0BFCBCh  apo_time
+0000D1h  basptr
+0BFD0Eh  baswrk
+0000D5h  bh
+0EFB6Fh  bin2dec
+0000D4h  bl
+0000ECh  bp_ram
+0000EAh  brkmsk
+0000D7h  ch
+0000D6h  cl
+0BFC29h  ctrl_disp
+00004Fh  d0_box_fill
+000042h  d0_chars_out_at
+000041h  d0_char_out_at
+000051h  d0_clear_disp
+000052h  d0_clear_from
+000049h  d0_clear_line
+000045h  d0_cursor_type
+000057h  d0_disp_no_clip
+000050h  d0_disp_state
+00004Bh  d0_dot8_read
+00004Ah  d0_dot8_write
+00004Dh  d0_dot_read
+00004Ch  d0_dot_write
+000058h  d0_guide_line
+000054h  d0_insert_line
+00004Eh  d0_line_draw
+000055h  d0_pattern_read
+000056h  d0_pattern_write
+000048h  d0_scroll_down
+000047h  d0_scroll_up
+000044h  d0_set_cursor
+000046h  d0_symbol_disp
+000045h  d1_buffer_clear
+00003Fh  d1_conv_tbl_set
+000046h  d1_fkey_display
+000040h  d1_init_driver
+000044h  d1_key_buf_set
+000043h  d1_key_read
+000041h  d1_matrix_read
+000042h  d1_mtx_rd_nd
+000042h  d2_byte_in
+000041h  d2_byte_out
+000048h  d2_er_high
+000049h  d2_er_low
+00004Bh  d2_read_cd
+00004Ah  d2_read_cs
+000046h  d2_rr_high
+000047h  d2_rr_low
+000044h  d2_rs_high
+000045h  d2_rs_low
+000043h  d2_set_hardware
+000043h  d3_printer_check
+000041h  d3_print_out
+000042h  d3_print_pos
+000042h  d4_data_read
+000043h  d4_data_verify
+000041h  d4_data_write
+000045h  d4_header_read
+000044h  d4_header_write
+000048h  d6_blk_cre_top
+000043h  d6_blk_xfer
+000045h  d6_block_create
+000046h  d6_block_delete
+000044h  d6_block_rename
+000042h  d6_block_resize
+000047h  d6_condense
+000041h  d6_search_phys
+000043h  d8_basic_exec
+000045h  d8_code_addr
+000041h  d8_power_off
+000042h  d8_secure_work
+000055h  d9_abs
+000051h  d9_acos
+000047h  d9_add
+000076h  d9_asc
+000050h  d9_asin
+000052h  d9_atan
+00007Fh  d9_bin2dec
+000077h  d9_chr_s
+00004Eh  d9_cos
+00007Eh  d9_dec2bin
+000053h  d9_deg
+00004Ah  d9_div
+000054h  d9_dms
+00004Ch  d9_exp
+000056h  d9_int
+00005Bh  d9_ln
+00005Ah  d9_log
+000049h  d9_mul
+000044h  d9_num_eq
+000046h  d9_num_ge
+000043h  d9_num_gt
+000045h  d9_num_le
+000042h  d9_num_lt
+000041h  d9_num_ne
+00004Bh  d9_pow
+000058h  d9_rnd
+000057h  d9_sgn
+00004Dh  d9_sin
+000059h  d9_sqr
+000073h  d9_str_eq
+000075h  d9_str_ge
+000072h  d9_str_gt
+000074h  d9_str_le
+000071h  d9_str_lt
+000070h  d9_str_ne
+000078h  d9_str_s
+000048h  d9_sub
+00004Fh  d9_tan
+000079h  d9_val
+0000CEh  datbas
+0EFAD4h  dec2bin
+0BFC7Dh  defdrv
+0BF01Ah  deja_ext
+000000h  dev_display
+000007h  dev_fdd
+000009h  dev_function
+000001h  dev_key
+000006h  dev_memcard
+000005h  dev_memfile
+000003h  dev_printer
+000002h  dev_sio
+000008h  dev_system
+000004h  dev_tape
+0000D9h  dh
+0000DDh  di
+0BF4BBh  disp_table
+0000D8h  dl
+0BFC96h  dotsop
+0E01C2h  drv_off
+0BFCA2h  d_link
+0000F6h  eih
+0000F5h  eil
+0000F4h  eoh
+0000F3h  eol
+000036h  err_buf
+000021h  err_range
+00000Ah  err_syn
+00005Ah  err_type
+0EF26Eh  eval
+0FFFE4h  fcs_call
+000002h  fcs_close_file
+000000h  fcs_create_file
+00000Eh  fcs_delete_file
+00000Ah  fcs_file_info
+00000Ch  fcs_find_file
+00000Fh  fcs_free_space
+000010h  fcs_init_fcs
+000001h  fcs_open_file
+000003h  fcs_read_block
+000005h  fcs_read_byte
+000008h  fcs_read_byte_nd
+00000Dh  fcs_rename_file
+000009h  fcs_seek
+00000Bh  fcs_set_dir
+000007h  fcs_verify_file
+000004h  fcs_write_block
+000006h  fcs_write_byte
+0BFC87h  font_00_1f
+0BFC90h  font_20_7f
+0BFC8Ah  font_80_9f
+0BFC93h  font_a0_df
+0BFC8Dh  font_e0_ff
+0BFC84h  font_pool_end
+0BFC3Fh  funckey_flag
+0BFC46h  funckey_name
+0BFC45h  funckey_slot
+0000EBh  iisr
+0000FBh  imr
+0BF359h  instr
+0BF356h  instr_m3
+0BFCD8h  intv_ext
+0BFCC6h  intv_ftimer
+0BFCCFh  intv_onkey
+0BFCD5h  intv_sio_rx
+0BFCD2h  intv_sio_tx
+0BFCDBh  intv_soft
+0BFCC9h  intv_stimer
+0BF3A8h  in_a1str
+0BF457h  in_bad
+0BF3FFh  in_ck
+0BF3E7h  in_cmp
+0BF427h  in_found
+0BF3AEh  in_havetext
+0BF40Dh  in_hit
+0BF4E2h  in_lt
+0BF417h  in_miss
+0BF425h  in_notfound
+0BF3DFh  in_outer
+0BF4E4h  in_p
+0BF473h  in_range
+0BF4E3h  in_res
+0BF456h  in_ret
+0BF359h  in_sp
+0BF4E1h  in_start
+0BF469h  in_syn
+0BF450h  in_syn0
+0BF45Fh  in_type
+0000E6h  iocsw
+0BFD17h  iocswrk
+0FFFE8h  iocs_call
+0FFFDCh  iocs_call3
+000009h  iocs_char_close
+000008h  iocs_char_open
+000022h  iocs_close_file
+000020h  iocs_create_file
+00002Eh  iocs_delete_file
+000003h  iocs_drive_name
+00002Ah  iocs_file_info
+000000h  iocs_find_drive
+00002Ch  iocs_find_file
+000004h  iocs_fmt_drive
+00003Fh  iocs_format
+00002Fh  iocs_free_space
+000001h  iocs_header_addr
+000002h  iocs_header_next
+000005h  iocs_init_all
+000040h  iocs_init_device
+000010h  iocs_media_check
+000011h  iocs_media_param
+000021h  iocs_open_file
+00000Eh  iocs_rd_byte_nd
+00000Ah  iocs_read_block
+00000Ch  iocs_read_byte
+000012h  iocs_read_sector
+00002Dh  iocs_rename_file
+000017h  iocs_sector_addr
+000029h  iocs_seek
+00002Bh  iocs_set_dir
+000016h  iocs_status_read
+000027h  iocs_verify_file
+000015h  iocs_vfy_sect
+00000Bh  iocs_write_block
+00000Dh  iocs_write_byte
+000013h  iocs_wr_sect
+000014h  iocs_wr_vfy_sect
+0000FCh  isr
+0BFCC0h  keymtx_tbl
+0BFCBFh  keyrep
+0BFC2Dh  keytbl_1b
+0BFC39h  keytbl_1b_ctrl
+0BFC33h  keytbl_1b_shift
+0BFC30h  keytbl_2b
+0BFC3Ch  keytbl_2b_ctrl
+0BFC36h  keytbl_2b_shift
+0BFCCCh  keyvct
+0BFC41h  key_hook1
+0BFCC3h  key_hook2
+0000F2h  ki
+0000F0h  ko
+0000F1h  koh
+0BF47Dh  kw_table
+0BF0A2h  lcase
+0BF09Fh  lcase_m3
+0000FEh  lcc
+00A004h  lcd1_cmd
+002004h  lcd1_cmd_2000
+00A006h  lcd1_data
+002006h  lcd1_data_2000
+00A007h  lcd1_read
+002007h  lcd1_read_2000
+00A005h  lcd1_stat
+002005h  lcd1_stat_2000
+00A008h  lcd2_cmd
+002008h  lcd2_cmd_2000
+00A00Ah  lcd2_data
+00200Ah  lcd2_data_2000
+00A00Bh  lcd2_read
+00200Bh  lcd2_read_2000
+00A009h  lcd2_stat
+002009h  lcd2_stat_2000
+00A000h  lcd_cmd
+002000h  lcd_cmd_2000
+0BFC9Bh  lcd_crsr_x
+0BFC9Ch  lcd_crsr_y
+00A002h  lcd_data
+002002h  lcd_data_2000
+0BFC9Eh  lcd_height
+0BFCA1h  lcd_mode
+0BFC9Dh  lcd_width
+0BF0C5h  lc_end
+0BF0B1h  lc_lp
+0BF0BDh  lc_pt
+0BFC2Ah  linprn
+0BF0D4h  ltrim
+0BF0D1h  ltrim_m3
+0BF4EDh  old_disp
+0BF4EAh  old_kw
+0000EDh  px
+0000EEh  py
+0BF02Ch  rd1str
+0BF069h  rd_er
+0BF03Ch  rd_ev
+0BF067h  rd_ok
+0BF02Ch  rd_sp
+0BF05Dh  rd_ty
+0BFCBBh  repeat_pitch
+0BFCBAh  repeat_wait
+0BF166h  rept
+0BF163h  rept_m3
+0BF06Ah  ret_str
+0BF216h  rp_bad
+0BF23Ch  rp_buf
+0BF4E0h  rp_c
+0BF204h  rp_done
+0BF1BBh  rp_ec
+0BF1F0h  rp_fill
+0BF1FEh  rp_fl
+0BF1BDh  rp_hc
+0BF4DFh  rp_n
+0BF232h  rp_range
+0BF215h  rp_ret
+0BF166h  rp_sp
+0BF228h  rp_syn
+0BF20Fh  rp_syn0
+0BF21Eh  rp_type
+0BF1E6h  rp_up
+0BF0DBh  rtrim
+0BF0D8h  rtrim_m3
+0000F9h  rxd
+0BFCDEh  s1_btm
+0BFC18h  s1_cap
+0BFC15h  s1_top
+0BFC12h  s2_cap
+0BFC0Fh  s2_top
+0BFC0Ch  s3_cap
+0BFC09h  s3_top
+0000FDh  scr
+0BFC27h  scrn_crsr_x
+0BFC28h  scrn_crsr_y
+0FFFD8h  secure_work_call
+0000DAh  si
+0BFD33h  sio_baud
+0BFD62h  sio_close_data
+0BFD3Bh  sio_crlf
+0BFD3Ch  sio_eof
+0BFD41h  sio_open_ctrl
+0BFD61h  sio_open_data
+0BFD40h  sio_open_wait
+0BFD35h  sio_rx_port_cond
+0BFD36h  sio_rx_port_ctrl
+0BFD34h  sio_setup
+0BFD31h  sio_timer
+0BFD39h  sio_tx_delay
+0BFD37h  sio_tx_port_cond
+0BFD38h  sio_tx_port_ctrl
+0BFCBEh  softint
+0BF24Bh  srept
+0BF248h  srept_m3
+0BF324h  sr_bad
+0BF34Ah  sr_buf
+0BF4E6h  sr_cnt
+0BF312h  sr_done
+0BF2CFh  sr_grow
+0BF310h  sr_grown
+0BF2FCh  sr_ic
+0BF2BBh  sr_lenok
+0BF2AFh  sr_mul
+0BF4E5h  sr_n
+0BF2EEh  sr_oc
+0BF340h  sr_range
+0BF323h  sr_ret
+0BF24Bh  sr_sp
+0BF4E7h  sr_src
+0BF336h  sr_syn
+0BF31Dh  sr_syn0
+0BF32Ch  sr_type
+0000FFh  ssr
+0BF000h  start
+0BF073h  st_err
+0BF4DCh  sv_bp0
+0BF4DDh  sv_bp1
+0BFCE1h  swork
+0000C2h  tk_in
+0000C7h  tk_lc
+0000C4h  tk_lt
+0000C8h  tk_rp
+0000C5h  tk_rt
+0000C9h  tk_sr
+0000C3h  tk_tr
+0000C6h  tk_uc
+0BF4DEh  tmode
+0BF0CDh  trim
+0BF0CAh  trim_m3
+0BF14Ah  tr_cp
+0BF116h  tr_ld
+0BF152h  tr_moved
+0BF12Eh  tr_nolead
+0BF109h  tr_notrail
+0BF0DDh  tr_set
+0BF0F6h  tr_trl
+0000FAh  txd
+0000CBh  txtbas
+0BF077h  ucase
+0BF074h  ucase_m3
+0000F7h  ucr
+0BF09Ah  uc_end
+0BF086h  uc_lp
+0BF092h  uc_pt
+0000F8h  usr
+0BFD1Ah  usrwrk
+
+  No fatal error.  Code: 0BF000h - 0BF4EFh [     1264 byte(s)]
