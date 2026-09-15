@@ -144,6 +144,10 @@ tk_rt:    equ   0C5H       ; RTRIM$
 tk_rp:    equ   0C8H       ; REPT$
 tk_sr:    equ   0C9H       ; SREPT$
 tk_in:    equ   0C2H       ; INSTR (rend un NOMBRE)
+tk_xc:    equ   0CAH       ; XCONSOLE (instruction) -- libre, hors BASCOM (CB-CE)
+tk_xcl:   equ   0CFH       ; XCLS     (instruction) -- libre, hors BASCOM
+fhandle:  equ   0BFC6DH    ; FHANDLE : handle -> numero de bloc de controle
+                          ; (absent de pce500.inc ; lu par 0E06A1h)
 alloc:    equ   0EF0DDH    ; reserve BA octets sur U (U -= BA) ; carry = erreur 54
 
 
@@ -174,6 +178,10 @@ err_div:  equ   015H       ; erreur BASIC 21, Division by zero -- le code
 start:
         pushu   x               ; X porte le point de reprise de l'interpreteur
         pushu   i
+; ⚠️ Un filtre d'une version PRECEDENTE du module peut rester branche sur le
+;    handle 0 (voir XCONSOLE) : ses adresses ne valent plus rien. On le
+;    debranche avant tout, en rendant l'entree d'origine du pilote.
+        call    xf_off
         mv      x,(basptr)
 
 ; ⛔ NE SAUVER LES CROCHETS QUE S'ILS SONT ENCORE CEUX DE LA ROM.
@@ -1300,6 +1308,459 @@ in_range:
         retf
 
 ; ============================================================================
+; XCONSOLE [debut][,[nombre]]  --  la fenetre de la console (INSTRUCTION)
+; ============================================================================
+; Borne la console aux lignes debut .. debut+nombre-1 de l'ecran de 4 lignes.
+;
+;   XCONSOLE            0,4 : l'ecran entier, l'etat normal
+;   XCONSOLE ,2         lignes 0-1 ; les lignes 2-3 restent figees
+;   XCONSOLE 2          lignes 2-3 (le nombre omis va jusqu'en bas)
+;   XCONSOLE 1,2        lignes 1-2
+;
+; Refus : debut > 3, nombre nul, ou debut+nombre > 4 -> erreur 33 ; une chaine
+; -> erreur 90 ; un separateur autre que ',' -> erreur 10.
+;
+; LE LEVIER EST lcd_height (0BFC9Eh), ET NON LE CURSEUR 0BFC27h/0BFC28h.
+;    Le pilote d'ecran defile quand (bh) atteint lcd_height (0F2B6Ah), clear_disp
+;    n'efface que les lignes 0 .. lcd_height-1 (0F2771h), et LOCATE refuse un Y
+;    au-dela (0FC682h). ✅ Mesure sur machine par J.-F. Albouy : POKE &BFC9E,2
+;    confine affichage, defilement et CLS aux lignes 0-1, et CLS ne remet PAS la
+;    hauteur a 4.
+;
+; POUR debut > 0, LA ROM NE SUFFIT PLUS : son defilement part TOUJOURS de la
+;    ligne 0 (0F27F1h, recopie par 0F28E3h) et emporterait les lignes figees.
+;    XCONSOLE branche alors le FILTRE D'ECRITURE (xf_entry, plus bas) sur le
+;    handle 0, et l'en debranche quand debut revient a 0.
+;
+; ⛔ LA FENETRE SURVIT A LA FIN DU PROGRAMME. Mesure : l'invite du mode direct
+;    reste dans les lignes de la fenetre, et seul MENU puis BASIC rend l'ecran.
+;    Un programme doit donc finir par XCONSOLE (puis CLS) -- apres une erreur ou
+;    un BREAK, MENU puis BASIC.
+;
+; La fin d'instruction est celle de 0F617Ch, que lisent CONSOLE et LOCATE :
+; ':' ou 0Dh, regardes sans etre consommes. Les espaces se sautent comme en
+; 0FB2D9h. BP est rendu en ABSOLU (sv_bp0) sur tous les chemins : une
+; instruction rend BP inchange (MODE-EMPLOI §6.1).
+xconsole:
+        mv      [!sv_bp0],(bp_ram)      ; BP d'entree
+        mv      a,000H
+        mv      [!xc_t],a               ; debut par defaut : 0
+        mv      a,0FFH
+        mv      [!xc_c],a               ; nombre : absent
+        call    xc_skip                 ; A = premier non-espace, X dessus
+        cmp     a,03AH                  ; ':'
+        jrz     xc_apply
+        cmp     a,00DH                  ; fin de ligne
+        jrz     xc_apply                ; XCONSOLE seul
+        cmp     a,02CH
+        jrz     xc_comma                ; XCONSOLE ,n : debut omis
+        call    xc_num                  ; le debut
+        jrc     xc_err
+        mv      [!xc_t],a
+        call    xc_skip
+        cmp     a,03AH
+        jrz     xc_apply
+        cmp     a,00DH
+        jrz     xc_apply
+        cmp     a,02CH
+        jrnz    xc_syn
+xc_comma:
+        inc     x                       ; consommer la virgule
+        call    xc_skip
+        cmp     a,03AH
+        jrz     xc_apply
+        cmp     a,00DH
+        jrz     xc_apply                ; XCONSOLE d, : nombre omis
+        call    xc_num                  ; le nombre de lignes
+        jrc     xc_err
+        mv      [!xc_c],a
+
+xc_apply:
+        mv      a,[!xc_t]
+        cmp     a,004H
+        jrnc    xc_range                ; debut au-dela de la ligne 3
+        mv      il,a                    ; IL = debut
+        mv      a,[!xc_c]
+        cmp     a,0FFH
+        jrz     xc_full                 ; nombre omis : jusqu'en bas
+        cmp     a,000H
+        jrz     xc_range                ; une fenetre de zero ligne
+        add     a,il                    ; A = debut + nombre = la hauteur
+        jrc     xc_range
+        cmp     a,005H
+        jrnc    xc_range                ; deborde sous la ligne 3
+        jr      xc_store
+xc_full:
+        mv      a,004H
+xc_store:
+        mv      [lcd_height],a
+        mv      [!xc_top],il            ; le debut, que XCLS et le filtre reliront
+        pushu   x                       ; xf_on et xf_off se servent de X et de I
+        pushu   i
+        mv      a,il
+        cmp     a,000H
+        jrz     xc_unhook
+        call    xf_on                   ; fenetre haute : le filtre est necessaire
+        jr      xc_hooked
+xc_unhook:
+        call    xf_off                  ; debut 0 : la ROM suffit
+xc_hooked:
+        popu    i
+        popu    x
+        mv      (bp_ram),[!sv_bp0]
+        rc
+        retf
+
+xc_syn:
+        mv      a,err_syn
+        jr      xc_err
+xc_range:
+        mv      a,err_range
+xc_err:
+        mv      (bp_ram),[!sv_bp0]
+        sc
+        retf
+
+; xc_skip -- saute les espaces ; X reste SUR le premier non-espace, rendu dans A.
+;            APPEL PROCHE.
+xc_skip:
+        mv      a,[x]
+        cmp     a,020H
+        jrnz    xs_ret
+        inc     x
+        jr      xc_skip
+xs_ret:
+        ret
+
+; xc_num -- une expression numerique entiere de 0 a 255.
+;           CY=0 : A = la valeur, BP rendu a sv_bp0.
+;           CY=1 : A = code d'erreur, BP rendu a sv_bp0.  APPEL PROCHE.
+xc_num:
+        callf   eval
+        jrc     xn_fail                 ; A porte deja le code
+        test    (BP+0),080H
+        jrnz    xn_type
+        callf   dec2bin
+        jrc     xn_fail
+        test    (BP+0),008H
+        jrnz    xn_range                ; negatif
+        mv      a,(BP+2)
+        or      a,(BP+3)
+        jrnz    xn_range                ; au-dela de 255
+        mv      a,(BP+1)
+        mv      (bp_ram),[!sv_bp0]      ; rendre le cadre d'eval
+        rc
+        ret
+xn_type:
+        mv      a,err_type
+        jr      xn_fail
+xn_range:
+        mv      a,err_range
+xn_fail:
+        mv      (bp_ram),[!sv_bp0]
+        sc
+        ret
+
+; ============================================================================
+; XCLS  --  efface la fenetre de XCONSOLE (INSTRUCTION)
+; ============================================================================
+; Pendant de CLS, qui reste celui de la ROM et efface les lignes 0 ..
+; lcd_height-1, lignes figees comprises. XCLS n'efface que xc_top ..
+; lcd_height-1 et place le curseur en (0,xc_top).
+;
+; Calque sur 0F9307h, la fin de CLS, avec les commandes documentees du device 0 :
+;   CLS  : 51h clear_disp            / 45h cursor_type, BA=0 / curseur (0,0)
+;   XCLS : 49h clear_line par ligne  / 45h cursor_type, BA=0 / curseur (0,xc_top)
+; et, comme CLS (0F9367h), les bits 0-1 de [(basptr)+070h] remis a zero --
+; ceux que LOCATE arme (0FC698h).
+;
+; La hauteur est RELUE dans lcd_height a chaque appel, et non memorisee : si
+; l'editeur l'a changee, XCLS suit la ROM au lieu de la contredire.
+xcls:
+        pushu   x                       ; le point de reprise
+        pushu   i
+        mv      a,[!xc_top]
+        mv      [!xcl_y],a
+xl_loop:
+        mv      a,[!xcl_y]
+        mv      (bh),a                  ; ordonnee de la ligne (argument de 49h)
+        mv      a,[lcd_height]
+        cmp     (bh),a                  ; ligne - hauteur : NC = hors fenetre
+        jrnc    xl_done
+        mvw     (cl),00000H             ; device 0, lecteur 0
+        mv      il,d0_clear_line
+        callf   iocs_call
+        mv      a,[!xcl_y]
+        inc     a
+        mv      [!xcl_y],a
+        jr      xl_loop
+xl_done:
+        mv      il,d0_cursor_type
+        sub     ba,ba                   ; pas de curseur, comme 0F930Eh
+        mvw     (cl),00000H
+        callf   iocs_call
+        mv      a,000H
+        mv      [scrn_crsr_x],a
+        mv      a,[!xc_top]
+        mv      [scrn_crsr_y],a
+        mv      x,(basptr)
+        mv      a,[x+070H]
+        and     a,0FCH                  ; les bits de LOCATE, comme CLS
+        mv      [x+070H],a
+        popu    i
+        popu    x
+        rc
+        retf
+
+; ============================================================================
+; LE FILTRE D'ECRITURE DE STDO:  --  confine le defilement a la fenetre
+; ============================================================================
+; ⛔ LE FILTRE NE SE CHAINE PAS DANS d_link, ET C'EST LA MACHINE QUI LE DIT.
+;    L'ecriture par le FCS ne passe PAS par iocs_call : en 0E0907h, il saute
+;    (retf) a l'adresse rangee en [bloc+2] du bloc de controle du handle, et
+;    cette adresse est memorisee a l'OUVERTURE (0E07F1h). Releve dans la System
+;    Data Area d'un PC-E500S reel (Samples/Extraction/s1-1.bin) :
+;
+;      bloc du handle 0 en 0BEE48h : 00 00 E7 21 0F A2 02
+;                                    |  |  \______/ \
+;                                device lecteur  0F21E7h = drv_display, attribut
+;
+;    Un en-tete ajoute en tete de d_link (la methode de MEMCHECK) ne verrait donc
+;    jamais un PRINT. On remplace l'adresse du bloc du handle 0 par xf_entry, et
+;    le filtre transmet a l'ancienne adresse -- recopiee dans les operandes de
+;    xf_pass et xf_call (auto-modification, comme MEMCHECK). Si la ROM rouvre
+;    STDO:, le filtre disparait simplement : l'echec est sans danger.
+;
+; LE BLOC DE CONTROLE se trouve comme en 0E0698h / 0E066Ah :
+;    numero = [fhandle + handle] ; bloc = [(iocsw)] + [(iocsw)+25h]
+;    + numero * 1Fh, borne par [(iocsw)+27h] ; octet 0 = device (0FFh = libre).
+;
+; LE PRINCIPE : DEFILER AVANT LA ROM. Pour un octet, le pilote fait (0F2A47h) :
+;    affichable        : retour a la ligne differe (0F2B57h : X >= largeur ->
+;                        X=0, Y+1), puis 0F2B6Ah (Y >= lcd_height -> defilement
+;                        de la ROM, Y = lcd_height-1), puis l'affichage ;
+;    0Dh               : 0F2B6Ah seul ;
+;    08 09 0A 0B 1C 1D 1F : 0F2B57h puis 0F2B6Ah ;
+;    07 0C 1E et le reste : pas de 0F2B6Ah.
+; Le filtre calcule la ligne que verra 0F2B6Ah. Si la ROM allait defiler, il
+; defile LUI-MEME les lignes debut .. lcd_height-1 (55h pattern_read, 56h
+; pattern_write, 49h clear_line), puis remonte Y pour que la ROM ne defile plus.
+; L'octet est ensuite transmis tel quel : le pilote fait tout le reste.
+;
+; ⚠️ SEULS LES ECRITURES DU HANDLE 0 SONT VUES. Un OPEN "SCRN:" ouvre un autre
+;    handle, qui garde l'adresse de la ROM.
+; ⚠️ NE PAS RECHARGER LE MODULE FILTRE BRANCHE. Entre LOAD M et CALL &BF000, le
+;    handle 0 designerait du code ecrase. Faire XCONSOLE avant de recharger ;
+;    CALL &BF000 debranche ensuite tout filtre reste dans la zone du module.
+
+; xf_entry -- l'entree du filtre : memes registres qu'une entree de pilote.
+xf_entry:
+        pushu   ba
+        mv      ba,i
+        cmp     a,00DH                  ; write_byte
+        jrz     xf_wbyte
+        cmp     a,00BH                  ; write_block
+        jrz     xf_wblock
+        popu    ba
+xf_pass:
+        jpf     0F21E7H                 ; OPERANDE REECRIT par xf_on
+xf_wbyte:
+        popu    ba                      ; A = l'octet, I = 0Dh
+        pushu   x
+        pushu   y
+        pushu   i
+        pushu   ba
+        call    xf_pre
+        popu    ba
+        popu    i
+        popu    y
+        popu    x
+        jr      xf_pass
+
+; write_block : X = source, Y = compte. On le rend octet par octet au pilote,
+; chacun precede de son controle ; Y est rendu tel quel, comme 0F2A18h.
+xf_wblock:
+        popu    ba
+        pushu   y
+xb_lp:
+        inc     y
+        dec     y
+        jrz     xb_end
+        mv      a,[x++]
+        pushu   x
+        pushu   y
+        pushu   a
+        call    xf_pre
+        popu    a
+        mv      il,00DH
+        call    xf_call                 ; write_byte de l'ancien pilote
+        popu    y
+        popu    x
+        dec     y
+        jr      xb_lp
+xb_end:
+        popu    y
+        rc
+        retf
+
+; xf_call -- appelle l'ancien pilote, commande dans IL.  APPEL PROCHE.
+xf_call:
+        callf   0F21E7H                 ; OPERANDE REECRIT par xf_on
+        ret
+
+; xf_pre -- A = l'octet a ecrire. Defile la fenetre si la ROM allait le faire.
+;           Detruit A, I, X, Y, (bl), (bh).  APPEL PROCHE.
+xf_pre:
+        mv      (bl),a                  ; l'octet, le temps de le classer
+        mv      a,[!xc_top]
+        cmp     a,000H
+        jrz     xp_none                 ; debut 0 : la ROM suffit
+        mv      (bh),a
+        mv      a,[lcd_height]
+        cmp     (bh),a                  ; debut - hauteur : NC = pas de fenetre
+        jrnc    xp_none
+        mv      a,(bl)
+        cmp     a,020H
+        jrnc    xp_wrap                 ; affichable
+        test    [ctrl_disp],040H
+        jrnz    xp_wrap                 ; code de controle affiche (0F2A56h)
+        cmp     a,00DH
+        jrz     xp_nw                   ; CR : 0F2B6Ah sans 0F2B57h
+        cmp     a,008H
+        jrc     xp_none                 ; 00-07
+        cmp     a,00CH
+        jrc     xp_wrap                 ; 08 09 0A 0B
+        cmp     a,01CH
+        jrc     xp_none                 ; 0C-1B
+        cmp     a,01EH
+        jrz     xp_none                 ; 1E, curseur vers le haut
+xp_wrap:                                ; 1C 1D 1F et les affichables
+        mv      il,000H
+        mv      (bl),[scrn_crsr_x]
+        mv      a,[lcd_width]
+        cmp     (bl),a                  ; X - largeur : NC = retour differe
+        jrc     xp_chk
+        mv      il,001H
+        jr      xp_chk
+xp_nw:
+        mv      il,000H
+xp_chk:
+        mv      a,[scrn_crsr_y]
+        add     a,il                    ; la ligne que verra 0F2B6Ah
+        mv      (bh),a
+        mv      a,[lcd_height]
+        cmp     (bh),a                  ; NC : la ROM defilerait
+        jrc     xp_none
+        mv      [!xf_w],il
+        call    xf_scroll
+        mv      a,[lcd_height]
+        dec     a
+        mv      il,[!xf_w]
+        sub     a,il                    ; lcd_height-1-retour : plus de defilement ROM
+        mv      [scrn_crsr_y],a
+xp_none:
+        ret
+
+; xf_scroll -- remonte d'une ligne les lignes debut+1 .. lcd_height-1, puis
+;              efface la derniere.  APPEL PROCHE.
+xf_scroll:
+        mv      a,[!xc_top]
+        mv      [!xf_y],a
+xs_lp:
+        mv      a,[!xf_y]
+        inc     a
+        mv      (bh),a                  ; la ligne du dessous
+        mv      a,[lcd_height]
+        cmp     (bh),a
+        jrnc    xs_clr                  ; plus rien a remonter
+        mv      x,xf_buf
+        mv      il,d0_pattern_read
+        call    xf_call
+        mv      a,[!xf_y]
+        mv      (bh),a
+        mv      x,xf_buf
+        mv      il,d0_pattern_write
+        call    xf_call
+        mv      a,[!xf_y]
+        inc     a
+        mv      [!xf_y],a
+        jr      xs_lp
+xs_clr:
+        mv      a,[lcd_height]
+        dec     a
+        mv      (bh),a
+        mv      il,d0_clear_line
+        call    xf_call
+        ret
+
+; xf_fcb -- X = le bloc de controle du handle 0 ; CY=1 s'il n'est pas l'ecran.
+;           Detruit A, I, (bl).  APPEL PROCHE.
+xf_fcb:
+        mv      a,[fhandle]             ; handle 0 -> numero de bloc
+        mv      (bl),a
+        mv      x,(iocsw)
+        mv      a,[x+027H]              ; nombre de blocs
+        cmp     (bl),a
+        jrnc    xfc_no
+        mv      i,[x+025H]
+        add     x,i                     ; le premier bloc
+        mv      i,0001FH                ; 31 octets par bloc
+xfc_lp:
+        mv      a,(bl)
+        cmp     a,000H
+        jrz     xfc_at
+        add     x,i
+        dec     (bl)
+        jr      xfc_lp
+xfc_at:
+        mv      a,[x]                   ; le device du bloc
+        cmp     a,000H
+        jrnz    xfc_no                  ; libre (0FFh) ou pas l'ecran
+        rc
+        ret
+xfc_no:
+        sc
+        ret
+
+; xf_on -- branche le filtre sur le handle 0.  APPEL PROCHE.
+;          Deja branche (adresse dans la zone du module) : ne rien faire, sans
+;          quoi le filtre se transmettrait a lui-meme.
+xf_on:
+        call    xf_fcb
+        jrc     xon_ret
+        mv      a,[x+004H]
+        cmp     a,00BH
+        jrnz    xon_set
+        mv      a,[x+003H]
+        cmp     a,0F0H
+        jrnc    xon_ret                 ; 0BF000h-0BFFFFh : deja nous
+xon_set:
+        mv      y,[x+002H]              ; l'adresse en place : la ROM, ou un autre
+        mv      [!xf_pass+1],y
+        mv      [!xf_call+1],y
+        mv      y,xf_entry
+        mv      [x+002H],y              ; une seule instruction : atomique
+xon_ret:
+        ret
+
+; xf_off -- debranche le filtre : rend l'adresse gardee dans xf_pass. Apres un
+;           rechargement du module, c'est celle de l'assemblage, 0F21E7h.
+;           APPEL PROCHE.
+xf_off:
+        call    xf_fcb
+        jrc     xof_ret
+        mv      a,[x+004H]
+        cmp     a,00BH
+        jrnz    xof_ret
+        mv      a,[x+003H]
+        cmp     a,0F0H
+        jrc     xof_ret                 ; pas un filtre de la zone du module
+        mv      y,[!xf_pass+1]
+        mv      [x+002H],y
+xof_ret:
+        ret
+
+; ============================================================================
 ; LES QUATRE ENTREES
 ; ============================================================================
 kw_table:
@@ -1315,6 +1776,8 @@ kw_table:
         db      5,'REPT$',tk_rp
         db      6,'SREPT$',tk_sr
         db      5,'INSTR',tk_in
+        db      8,'XCONSOLE',tk_xc
+        db      4,'XCLS',tk_xcl
         db      0                       ; fin de table
 
 disp_table:
@@ -1346,6 +1809,8 @@ disp_table:
         db      tk_rp, rept_m3,  rept_m3/256,  rept_m3/65536+040H
         db      tk_sr, srept_m3, srept_m3/256, srept_m3/65536+040H
         db      tk_in, instr_m3, instr_m3/256, instr_m3/65536+040H
+        db      tk_xc,  xconsole, xconsole/256, xconsole/65536+080H   ; instructions :
+        db      tk_xcl, xcls,     xcls/256,     xcls/65536+080H       ; pas de +3
         db      0                       ; fin de table
 
 ; ============================================================================
@@ -1378,6 +1843,13 @@ in_p:     db    0
 sr_n:     db    0
 sr_cnt:   db    0
 sr_src:   db    0,0,0
+xc_t:     db    0             ; XCONSOLE : debut lu
+xc_c:     db    0             ; XCONSOLE : nombre lu, 0FFh = absent
+xc_top:   db    0             ; la premiere ligne de la fenetre, relue par XCLS
+xcl_y:    db    0             ; XCLS : la ligne en cours d'effacement
+xf_w:     db    0             ; filtre : 1 si retour a la ligne differe
+xf_y:     db    0             ; filtre : la ligne en cours de remontee
+xf_buf:   ds    240           ; filtre : le motif d'une ligne (240 colonnes)
 old_kw:   db    0,0,0
 old_disp: db    0,0,0
 

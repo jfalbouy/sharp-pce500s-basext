@@ -27,10 +27,15 @@ sans en être le propriétaire :
 | [`JOURNAL-MISE-AU-POINT.md`](JOURNAL-MISE-AU-POINT.md) | l'histoire de la mise au point : chaque défaut, sa cause et la mesure qui l'a tranché |
 | `Referentiel PC-E500S SC62015/12-extensions-basic.md` | le référentiel d'origine : cadres, device 9, matrices, méthode |
 
-## Le module : douze mots-clés
+## Le module : quatorze mots-clés
 
-✅ Tous validés sur émulateur PC-E500S le 2026-09-15. `BASEXT.ASM` fait 1740 octets, en
-`0BF000h`–`0BF6CBh`.
+✅ Les douze premiers validés sur émulateur PC-E500S le 2026-09-15. ✅ `XCONSOLE` et `XCLS`
+éprouvés par J.-F. Albouy avec `essais/XCONTEST.BAS` : fenêtres, `XCLS` qui épargne les lignes
+figées, retour à 4 lignes, et les cinq refus (33, 33, 33, 90, 10).
+✅ Le **filtre d'écriture** qui confine le défilement quand `début` > 0 est éprouvé par
+J.-F. Albouy avec `essais/XSCROLL.BAS` : ligne haute figée pendant le défilement, haut et bas figés
+avec retour à la ligne automatique, puis retour à 4 lignes.
+`BASEXT.ASM` fait 2709 octets, en `0BF000h`–`0BFA94h`.
 
 | Mot-clé | Token | Genre | |
 |---|---|---|---|
@@ -46,6 +51,8 @@ sans en être le propriétaire :
 | `LCASE$ (s$)` | `C7h` | fonction chaîne | en minuscules |
 | `REPT$ (n,c$)` | `C8h` | fonction chaîne | `n` fois le 1er caractère de `c$` |
 | `SREPT$ (n,s$)` | `C9h` | fonction chaîne | `n` fois `s$`, résultat ≤ 255 |
+| `XCONSOLE [début][,[n]]` | `CAh` | **instruction** | borne la console aux lignes `début`..`début+n−1` : écrit `lcd_height` et, si `début` > 0, branche un filtre d'écriture sur le handle 0 ; `XCONSOLE` seul rétablit l'écran et le débranche |
+| `XCLS` | `CFh` | **instruction** | efface la fenêtre de `XCONSOLE`, curseur en `(0,début)` |
 
 ## Arborescence
 
@@ -55,12 +62,14 @@ BASEXT/
 ├── MODE-EMPLOI.md             le mode d'emploi et référentiel
 ├── JOURNAL-MISE-AU-POINT.md   le journal de mise au point
 ├── src/
-│   ├── BASEXT.ASM             le module (12 mots-cles) -- + .OBJ .lst .UU
+│   ├── BASEXT.ASM             le module (14 mots-cles) -- + .OBJ .lst .UU
 │   ├── STREXT.ASM             module de developpement des 8 fonctions chaine -- + .obj .lst .uu
 │   ├── LSEPT.ASM              l'ancetre : la seule fonction LPEEK -- + .OBJ .lst .UU
 │   └── pce500.inc             constantes systeme, GENEREES (ne pas editer a la main)
 ├── essais/
 │   ├── BEXTTEST.BAS           les 12 mots-cles (ligne 60 corrigee le 2026-09-15)
+│   ├── XCONTEST.BAS           XCONSOLE et XCLS : trois fenetres, puis les cinq refus
+│   ├── XSCROLL.BAS            defilement confine : ligne haute figee, puis haut et bas figes
 │   ├── BEXT.BAS               LPEEK et LPOKE, litteraux puis variables
 │   ├── TEST.BAS               WPEEK, valeur nulle, borne des 20 bits
 │   ├── MODTEST.BAS            MOD confronte au BASIC sur 40 valeurs
@@ -87,7 +96,7 @@ C:\Claude\xasm2026-4\bin\xasm2026-4.exe BASEXT.ASM -O -L -S -B -K
 ```basic
 POKE &BFE03,&1A,&FD,&B,0,&C,0 : CALL &FFFD8   ' reserver 3072 octets (petit reset)
 LOAD M "S1:BASEXT.OBJ" : CALL &BF000          ' charger et installer
-W=LPEEK &BFD0E : PRINT HEX$ LPEEK (W+&90)     ' verifier : BF62C pour cette version
+W=LPEEK &BFD0E : PRINT HEX$ LPEEK (W+&90)     ' verifier : BF8E7 pour cette version
 ```
 
 **Puis seulement** charger le programme qui emploie les mots-clés : le BASIC tokenise à la saisie.

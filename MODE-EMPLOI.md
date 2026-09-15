@@ -173,6 +173,7 @@ routine sans avoir de nom.
 | Tokens | Statut |
 |---|---|
 | `07h` `0Ah` `0Eh` `0Fh` `C2h`–`C9h` | ✅ **éprouvés sur machine** par BASEXT (2026-09-05 et 2026-09-15) |
+| `CAh` `CFh` | ✅ **éprouvés** par BASEXT (`XCONSOLE`, `XCLS`, `essais/XCONTEST.BAS`) |
 | `04h` `05h` `06h` `08h` `09h` `0Fh` `4Bh` `CBh`–`CEh` | employés par BASCOM (TORO, 1994) ; ⚠️ son `4Fh` est pris par `UNTIL` sur le 500S |
 | `1Eh` `1Fh` `FEh` `FFh` | ⚠️ **non éprouvés**. Ces valeurs ont un rôle dans le texte tokenisé (compte de saut, référence de ligne, échappement, fin). Rien n'indique de conflit, puisqu'un token suit toujours un `0FEh`, mais **aucun essai ne l'a vérifié** : les éviter tant qu'un essai n'a pas été fait |
 | `00h` | ⛔ **exclu** : il termine la table de répartition d'une extension |
@@ -1023,6 +1024,7 @@ Tous ont coûté au moins une séance.
 | ⛔ zone non réservée | §9.2 | §9.2 |
 | ⛔ programme saisi avant l'installation | §9.3 | §9.3 |
 | ⛔ nom de fichier de plus de 8 caractères | 8.3, majuscules | §9.1 |
+| ⛔ filtre de l'écran chaîné dans `d_link` | le FCS **mémorise l'entrée du pilote à l'ouverture** (`0E07F1h`) et saute à `[bloc+2]` (`0E0907h`) sans passer par `iocs_call` : un `PRINT` ne voit jamais la chaîne. Remplacer l'adresse dans le bloc de contrôle du handle (relevé sur `s1-1.bin` : `00 00 E7 21 0F A2`) ✅ machine | `src/BASEXT.ASM`, filtre de `XCONSOLE` |
 
 ---
 
@@ -1037,8 +1039,8 @@ Tous ont coûté au moins une séance.
   BASEXT, qui regroupe les douze mots-clés.
 - ⚠️ **Entiers de 20 bits** pour tout ce qui passe par `dec2bin`/`bin2dec`. Le domaine complet du
   BASIC (flottants, 10 ou 20 chiffres) passe par le device 9 (§7.1).
-- ⚠️ **Le module doit tenir dans la zone réservée.** BASEXT fait 1740 octets (`0BF000h`–`0BF6CBh`)
-  sur 3072.
+- ⚠️ **Le module doit tenir dans la zone réservée.** BASEXT fait 2709 octets (`0BF000h`–`0BFA94h`)
+  sur 3072, depuis l'ajout de `XCONSOLE`, `XCLS` et du filtre d'écriture (1740 octets auparavant).
 
 ---
 
