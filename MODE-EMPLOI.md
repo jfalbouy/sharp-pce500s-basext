@@ -1050,8 +1050,8 @@ Tous ont coûté au moins une séance.
 | # | Question | Pour la trancher |
 |---|---|---|
 | 1 | ✅ **Clos** — `BEXTTEST.BAS` ligne 60 écrivait `LPOKE &BF800,&123456,&789ABC`, deux valeurs au-delà de `0FFFFFh`. **L'erreur 33 a été vérifiée sur émulateur** par J.-F. Albouy le 2026-09-15, comme le prédisait le code de `dec2bin`. Corrigé en `&12345,&6789A` : attendu `LPEEK = 12345 6789A`, puis `WPEEK = 2345` | — |
-| 2 | La **désinstallation** : jamais essayée | restaurer les crochets depuis `old_kw`/`old_disp`, après un RESET |
-| 3 | Le **RESET** : `0F93C3h` réécrit-il la sentinelle à chaque RESET, ou au démarrage à froid seulement ? | relire les crochets après un RESET |
+| 2 | ✅ **Clos pour le mécanisme** — rendre les crochets depuis `old_kw`/`old_disp` **fonctionne** : éprouvé sur émulateur le 2026-09-16 par J.-F. Albouy avec `C:\Claude\BASEXT-DRV` (routine `bd_arret` du pilote, qui ne les rend que s'ils désignent encore `kw_table`) : crochet des noms relu **`FFFFF`** après désinstallation. ⚠️ Le module autonome, lui, n'a toujours **pas** d'entrée de désinstallation | écrire l'entrée dans le module autonome, sur le modèle de `bd_arret` |
+| 3 | ✅ **Clos pour les gestes courants** — avec BASEXT résident (`BASEXT-DRV`, 2026-09-16), les crochets **survivent** à `OFF`/`ON`, au petit reset `CALL &FFFD8` (zone ramenée à 16 octets, puis à 0) et au **soft RESET** (bouton RESET seul, sans confirmation d'initialisation), rapportés par J.-F. Albouy (`DRVTEST.BAS` : `CROCHETS : OK`). ⚠️ Reste à savoir quel chemin exécute `0F93C3h` (la sentinelle) et `0F0D9Eh` (remise à zéro de `d_link`) : vraisemblablement l'initialisation de la mémoire | lire les appelants de `0F93C3h` |
 | 4 | Le **chaînage** de deux modules | un module qui balaie d'abord la table sauvée |
 | 5 | Un token d'extension **à la fois instruction et fonction** (drapeau `0C0h`) | reproduire le trampoline des six tokens doubles |
 | 6 | 📖 Une fonction d'extension sur un token **d'instruction de la ROM** : la lecture des résolveurs le permettrait (la ROM ne porte pas le bit `040h`, le résolveur passe à l'extension), mais le nom se tokenise d'abord par la table de la ROM | essai |

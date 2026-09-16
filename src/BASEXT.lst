@@ -103,6 +103,24 @@
 000000                   	;
 000000                   	;       xasm2026-4 BASEXT.ASM -O -L -S -B -K
 000000                   	; ============================================================================
+000000                   	; CE FICHIER EST AUSSI INCLUS PAR C:\Claude\BASEXT-DRV (BASEXT residant dans un
+000000                   	; bloc de pilote de S1:). Le pilote pose « def basext_pilote » puis fait
+000000                   	; « include ..\..\BASEXT\src\BASEXT.ASM » : l'include de pce500.inc, l'org et
+000000                   	; le pre_on ci-dessous sont alors les SIENS, et le corps est assemble a sa place
+000000                   	; dans le bloc. Le module autonome, lui, ne definit rien et reste identique a
+000000                   	; l'octet (verifie le 2026-09-16 : .OBJ inchange).
+000000                   	;
+000000                   	;    ⚠️ Le pilote RELOGE ce corps : sa table de relocation est mesuree par
+000000                   	;       double assemblage (BASEXT-DRV/outils/reloc.py). Deux regles en
+000000                   	;       decoulent pour tout ajout ici :
+000000                   	;       - aucun octet ne doit dependre de l'adresse autrement que par un champ
+000000                   	;         de 2 ou 3 octets (un « db etiquette/256 » isole est refuse) ;
+000000                   	;       - aucun « assert » sur une adresse ABSOLUE (il echouerait aux autres
+000000                   	;         origines) : ecrire les assertions en differences d'etiquettes.
+000000                   	;
+000000                   	;    ⛔ IFNDEF teste un symbole pose par DEF, PAS par EQU : un
+000000                   	;       « basext_pilote: equ 1 » ne masque rien (mesure le 2026-09-16).
+000000                   	; ============================================================================
 000000                   	
 000000                   	        include pce500.inc
 000000                   	basptr: equ 0D1H ; POINTEUR (3 octets) vers la zone de travail de l'interpreteur BASIC, en RAM interne. C'est la COPIE de celui que la ROM lit en 0BFD0Eh (baswrk) : elle la fait par mvp (0D1h),[0BFD0Eh] en 0F98CAh. Les crochets d'extension du BAS ...
@@ -185,7 +203,7 @@
 000000                   	err_div:  equ   015H       ; erreur BASIC 21, Division by zero -- le code
 000000                   	                          ; que la ROM elle-meme emploie, lu en 0ECD67h
 000000                   	
-0BF000                   	        org     0BF000H
+0BF000                   	        org     0BF000H         ; module autonome seulement (voir l'en-tete)
 0BF000                   	        pre_on
 0BF000                   	
 0BF000                   	; ============================================================================
@@ -1748,6 +1766,14 @@
 0BF8A6                   	; xf_on -- branche le filtre sur le handle 0.  APPEL PROCHE.
 0BF8A6                   	;          Deja branche (adresse dans la zone du module) : ne rien faire, sans
 0BF8A6                   	;          quoi le filtre se transmettrait a lui-meme.
+0BF8A6                   	;
+0BF8A6                   	;    ⛔ DANS LE PILOTE (BASEXT-DRV), LA PLAGE 0BF000h-0BFFFFh NE DIT RIEN : le
+0BF8A6                   	;       bloc reside ailleurs dans S1:, et un « deja nous » par plage laisserait
+0BF8A6                   	;       le filtre se brancher sur lui-meme au second XCONSOLE (recursion sans
+0BF8A6                   	;       fin). Le pilote compare donc l'adresse en place a xf_entry, exactement.
+0BF8A6                   	;       Ces octets de plage ne sont pas des champs d'adresse : la mesure de
+0BF8A6                   	;       relocation (reloc.py) ne pouvait pas les voir. Releve a la lecture le
+0BF8A6                   	;       2026-09-16. Le module autonome garde son test, eprouve sur machine.
 0BF8A6                   	xf_on:
 0BF8A6 04 74 F8          	        call    xf_fcb
 0BF8A9 1C 20             	        jrc     xon_ret
@@ -1782,6 +1808,7 @@
 0BF8E3 B5 84 02          	        mv      [x+002H],y
 0BF8E6                   	xof_ret:
 0BF8E6 06                	        ret
+0BF8E7                   	
 0BF8E7                   	
 0BF8E7                   	; ============================================================================
 0BF8E7                   	; LES QUATRE ENTREES

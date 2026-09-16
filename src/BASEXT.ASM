@@ -103,8 +103,28 @@
 ;
 ;       xasm2026-4 BASEXT.ASM -O -L -S -B -K
 ; ============================================================================
+; CE FICHIER EST AUSSI INCLUS PAR C:\Claude\BASEXT-DRV (BASEXT residant dans un
+; bloc de pilote de S1:). Le pilote pose « def basext_pilote » puis fait
+; « include ..\..\BASEXT\src\BASEXT.ASM » : l'include de pce500.inc, l'org et
+; le pre_on ci-dessous sont alors les SIENS, et le corps est assemble a sa place
+; dans le bloc. Le module autonome, lui, ne definit rien et reste identique a
+; l'octet (verifie le 2026-09-16 : .OBJ inchange).
+;
+;    ⚠️ Le pilote RELOGE ce corps : sa table de relocation est mesuree par
+;       double assemblage (BASEXT-DRV/outils/reloc.py). Deux regles en
+;       decoulent pour tout ajout ici :
+;       - aucun octet ne doit dependre de l'adresse autrement que par un champ
+;         de 2 ou 3 octets (un « db etiquette/256 » isole est refuse) ;
+;       - aucun « assert » sur une adresse ABSOLUE (il echouerait aux autres
+;         origines) : ecrire les assertions en differences d'etiquettes.
+;
+;    ⛔ IFNDEF teste un symbole pose par DEF, PAS par EQU : un
+;       « basext_pilote: equ 1 » ne masque rien (mesure le 2026-09-16).
+; ============================================================================
 
+        ifndef  basext_pilote
         include pce500.inc
+        endif
 
 ; --- les entrees LOINTAINES de la ROM (toutes terminees par RETF) -----------
 chknum:   equ   0EFBF3H    ; evalue l'expression numerique, verifie le type
@@ -169,8 +189,10 @@ err_buf:  equ   036H       ; erreur BASIC 54, Buffer space exceeded
 err_div:  equ   015H       ; erreur BASIC 21, Division by zero -- le code
                           ; que la ROM elle-meme emploie, lu en 0ECD67h
 
-        org     0BF000H
+        ifndef  basext_pilote
+        org     0BF000H         ; module autonome seulement (voir l'en-tete)
         pre_on
+        endif
 
 ; ============================================================================
 ; L'INSTALLATION -- c'est ici que mene CALL &BF000
@@ -1732,15 +1754,28 @@ xfc_no:
 ; xf_on -- branche le filtre sur le handle 0.  APPEL PROCHE.
 ;          Deja branche (adresse dans la zone du module) : ne rien faire, sans
 ;          quoi le filtre se transmettrait a lui-meme.
+;
+;    ⛔ DANS LE PILOTE (BASEXT-DRV), LA PLAGE 0BF000h-0BFFFFh NE DIT RIEN : le
+;       bloc reside ailleurs dans S1:, et un « deja nous » par plage laisserait
+;       le filtre se brancher sur lui-meme au second XCONSOLE (recursion sans
+;       fin). Le pilote compare donc l'adresse en place a xf_entry, exactement.
+;       Ces octets de plage ne sont pas des champs d'adresse : la mesure de
+;       relocation (reloc.py) ne pouvait pas les voir. Releve a la lecture le
+;       2026-09-16. Le module autonome garde son test, eprouve sur machine.
 xf_on:
         call    xf_fcb
         jrc     xon_ret
+        ifdef   basext_pilote
+        call    xf_nous                 ; Z = l'adresse en place est xf_entry
+        jrz     xon_ret                 ; deja nous
+        else
         mv      a,[x+004H]
         cmp     a,00BH
         jrnz    xon_set
         mv      a,[x+003H]
         cmp     a,0F0H
         jrnc    xon_ret                 ; 0BF000h-0BFFFFh : deja nous
+        endif
 xon_set:
         mv      y,[x+002H]              ; l'adresse en place : la ROM, ou un autre
         mv      [!xf_pass+1],y
@@ -1756,16 +1791,37 @@ xon_ret:
 xf_off:
         call    xf_fcb
         jrc     xof_ret
+        ifdef   basext_pilote
+        call    xf_nous                 ; pilote : seulement NOTRE filtre
+        jrnz    xof_ret
+        else
         mv      a,[x+004H]
         cmp     a,00BH
         jrnz    xof_ret
         mv      a,[x+003H]
         cmp     a,0F0H
         jrc     xof_ret                 ; pas un filtre de la zone du module
+        endif
         mv      y,[!xf_pass+1]
         mv      [x+002H],y
 xof_ret:
         ret
+
+        ifdef   basext_pilote
+; xf_nous -- Z=1 si l'adresse en place dans le bloc X ([x+2], 3 octets) est
+;            xf_entry. Preserve X. Detruit Y. APPEL PROCHE. Pilote seulement.
+;            Le test de zero sur 20 bits emprunte l'idiome du DRIVER_TEMPLATE
+;            (« inc x / jrz » sur 0FFFFFh) : dec puis inc ramene a zero.
+xf_nous:
+        pushu   x
+        mv      y,[x+002H]
+        mv      x,xf_entry
+        sub     y,x
+        popu    x
+        dec     y
+        inc     y
+        ret
+        endif
 
 ; ============================================================================
 ; LES QUATRE ENTREES

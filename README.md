@@ -126,6 +126,16 @@ python C:\Claude\BASEXT\outils\extraire_tokens.py
 - **Fichiers `.BAS` destinés à la machine** : CRLF et MAJUSCULES ASCII.
 - **Tout ajout de mot-clé** : vérifier le nom et le token (`MODE-EMPLOI.md` §2), puis mettre à jour
   le tableau ci-dessus, `BEXTTEST.BAS` et le journal.
+- **`src/BASEXT.ASM` est aussi inclus par `C:\Claude\BASEXT-DRV`**, qui en fait un pilote
+  résident de `S1:` (2026-09-16). Le pilote pose `def basext_pilote`, ce qui masque l'include de
+  `pce500.inc`, l'`org` et le `pre_on` du module. Tout ajout doit donc rester **relogeable** : pas
+  d'octet qui dépende de l'adresse hors d'un champ de 2 ou 3 octets, pas d'`assert` sur une adresse
+  absolue. Après modification, relancer
+  `python C:\Claude\BASEXT-DRV\outils\reloc.py BASEXT.ASM` depuis `src/` : il refuse ce que le
+  pilote ne saurait pas reloger. ⚠️ Un test sur une **plage d'adresses** du module
+  (`0BF000h`–`0BFFFFh`) lui échappe, car ce n'est pas un champ d'adresse : `xf_on`/`xf_off` en
+  faisaient un, remplacé **sous `ifdef basext_pilote`** par une comparaison exacte à `xf_entry`
+  (`xf_nous`, 2026-09-16) ; le module autonome garde le sien.
 
 ## Origine de ce dossier
 
