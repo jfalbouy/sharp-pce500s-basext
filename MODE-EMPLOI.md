@@ -1024,6 +1024,7 @@ Tous ont coûté au moins une séance.
 | ⛔ zone non réservée | §9.2 | §9.2 |
 | ⛔ programme saisi avant l'installation | §9.3 | §9.3 |
 | ⛔ nom de fichier de plus de 8 caractères | 8.3, majuscules | §9.1 |
+| ⛔ essai qui écrit dans le module | un `LPOKE`/`POKE` d'essai doit viser une adresse **au-delà de la fin du module**, relue dans le `.lst` à chaque version. Mesuré le 2026-09-16 : `BEXTTEST.BAS` écrivait en `&BF800`, libre à 1740 octets mais **dans `xf_pre`** à 2709 ; le filtre exécutait les octets écrits et la machine perdait ses lecteurs (`S1:`/`S2:` NEW CARD). `TEST.BAS` et `BEXT.BAS` (`&BF300`) avaient le même défaut. Les trois visent désormais `&BFBF0` | `essais/` |
 | ⛔ filtre de l'écran chaîné dans `d_link` | le FCS **mémorise l'entrée du pilote à l'ouverture** (`0E07F1h`) et saute à `[bloc+2]` (`0E0907h`) sans passer par `iocs_call` : un `PRINT` ne voit jamais la chaîne. Remplacer l'adresse dans le bloc de contrôle du handle (relevé sur `s1-1.bin` : `00 00 E7 21 0F A2`) ✅ machine | `src/BASEXT.ASM`, filtre de `XCONSOLE` |
 
 ---

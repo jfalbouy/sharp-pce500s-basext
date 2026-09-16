@@ -1,7 +1,8 @@
 10 'TEST.BAS -- complement de BEXT.BAS : WPEEK et les cas limites
 20 'BEXT.BAS eprouve LPOKE et LPEEK, litteraux puis variables.
 30 'Celui-ci ajoute WPEEK, la valeur nulle et la borne des 20 bits.
-40 CLS :CLEAR :AD=&BF300
+40 CLS :CLEAR :AD=&BFBF0
+45 'AD : zone reservee, au-dela du module (fin 0BFA94h) -- &BF300 est DANS le module
 50 '
 60 'WPEEK ne prend que les deux premiers octets
 70 LPOKE AD,&BFC15

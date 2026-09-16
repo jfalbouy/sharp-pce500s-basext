@@ -35,7 +35,16 @@ figées, retour à 4 lignes, et les cinq refus (33, 33, 33, 90, 10).
 ✅ Le **filtre d'écriture** qui confine le défilement quand `début` > 0 est éprouvé par
 J.-F. Albouy avec `essais/XSCROLL.BAS` : ligne haute figée pendant le défilement, haut et bas figés
 avec retour à la ligne automatique, puis retour à 4 lignes.
+✅ `essais/BEXTTEST.BAS` passe les 14 mots-clés (`*** 14/14 OK ***`, 2026-09-16).
 `BASEXT.ASM` fait 2709 octets, en `0BF000h`–`0BFA94h`.
+
+⚠️ **`CLS` dans une fenêtre de moins de 4 lignes affiche les libellés des touches de fonction**
+sur la ligne 3 : c'est la ROM (`CLS` appelle `fkey_display` quand `lcd_height` ≠ 4, `0F931Ah` →
+`0F1CFAh`). Dans une fenêtre, effacer par `XCLS` ; pour tout effacer, `XCONSOLE : CLS`.
+
+⛔ **Les essais qui écrivent en mémoire visent `&BFBF0`**, au-delà de la fin du module. `&BF800`
+et `&BF300`, libres autrefois, sont aujourd'hui **dans** le module : `BEXTTEST.BAS` y écrasait le
+filtre et faisait perdre ses lecteurs à la machine (`MODE-EMPLOI.md` §10).
 
 | Mot-clé | Token | Genre | |
 |---|---|---|---|

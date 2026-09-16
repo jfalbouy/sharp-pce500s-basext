@@ -1353,6 +1353,13 @@
 0BF62F                   	;    Un programme doit donc finir par XCONSOLE (puis CLS) -- apres une erreur ou
 0BF62F                   	;    un BREAK, MENU puis BASIC.
 0BF62F                   	;
+0BF62F                   	; ⚠️ CLS AVEC UNE FENETRE DE MOINS DE 4 LIGNES AFFICHE LES LIBELLES DES TOUCHES
+0BF62F                   	;    DE FONCTION sur la ligne 3. C'est la ROM : CLS teste lcd_height (0F931Ah) et,
+0BF62F                   	;    s'il ne vaut pas 4, appelle fkey_display (commande 46h du clavier, 0F1CFAh),
+0BF62F                   	;    qui dessine les libelles par la commande 58h de l'ecran -- sans passer par le
+0BF62F                   	;    filtre. Constate sur machine, et deja avec un simple POKE &BFC9E,2. Dans une
+0BF62F                   	;    fenetre, effacer par XCLS ; pour tout effacer, XCONSOLE : CLS.
+0BF62F                   	;
 0BF62F                   	; La fin d'instruction est celle de 0F617Ch, que lisent CONSOLE et LOCATE :
 0BF62F                   	; ':' ou 0Dh, regardes sans etre consommes. Les espaces se sautent comme en
 0BF62F                   	; 0FB2D9h. BP est rendu en ABSOLU (sv_bp0) sur tous les chemins : une

@@ -1337,6 +1337,13 @@ in_range:
 ;    Un programme doit donc finir par XCONSOLE (puis CLS) -- apres une erreur ou
 ;    un BREAK, MENU puis BASIC.
 ;
+; ⚠️ CLS AVEC UNE FENETRE DE MOINS DE 4 LIGNES AFFICHE LES LIBELLES DES TOUCHES
+;    DE FONCTION sur la ligne 3. C'est la ROM : CLS teste lcd_height (0F931Ah) et,
+;    s'il ne vaut pas 4, appelle fkey_display (commande 46h du clavier, 0F1CFAh),
+;    qui dessine les libelles par la commande 58h de l'ecran -- sans passer par le
+;    filtre. Constate sur machine, et deja avec un simple POKE &BFC9E,2. Dans une
+;    fenetre, effacer par XCLS ; pour tout effacer, XCONSOLE : CLS.
+;
 ; La fin d'instruction est celle de 0F617Ch, que lisent CONSOLE et LOCATE :
 ; ':' ou 0Dh, regardes sans etre consommes. Les espaces se sautent comme en
 ; 0FB2D9h. BP est rendu en ABSOLU (sv_bp0) sur tous les chemins : une
