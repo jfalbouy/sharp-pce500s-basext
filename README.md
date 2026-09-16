@@ -67,7 +67,7 @@ BASEXT/
 │   ├── LSEPT.ASM              l'ancetre : la seule fonction LPEEK -- + .OBJ .lst .UU
 │   └── pce500.inc             constantes systeme, GENEREES (ne pas editer a la main)
 ├── essais/
-│   ├── BEXTTEST.BAS           les 12 mots-cles (ligne 60 corrigee le 2026-09-15)
+│   ├── BEXTTEST.BAS           les 14 mots-cles (XCONSOLE et XCLS ajoutes le 2026-09-16)
 │   ├── XCONTEST.BAS           XCONSOLE et XCLS : trois fenetres, puis les cinq refus
 │   ├── XSCROLL.BAS            defilement confine : ligne haute figee, puis haut et bas figes
 │   ├── BEXT.BAS               LPEEK et LPOKE, litteraux puis variables
