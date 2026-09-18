@@ -1,5 +1,7 @@
 # BASEXT — ajouter des instructions et des fonctions au BASIC
 
+*Rédigé le 2026-09-04 — mis à jour le 2026-09-15*
+
 > **Ce fichier est le journal de mise au point.** C'est le `README.md` de
 > `SC62015Disassembler/Samples/BASEXT/`, copié tel quel le 2026-09-15 quand BASEXT est devenu un
 > projet transverse (`C:\Claude\BASEXT`). Il est gardé pour son histoire. Pour **créer** une

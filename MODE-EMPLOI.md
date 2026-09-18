@@ -1,5 +1,7 @@
 # Créer une instruction BASIC — mode d'emploi et référentiel
 
+*Rédigé le 2026-09-15 — mis à jour le 2026-09-16*
+
 **PC-E500S, ROM 8.3.** Comment greffer ses propres mots-clés sur l'interpréteur : les
 instructions standard et leur mécanique, la procédure, les adresses de la ROM à employer, et la
 manière de rendre la main au BASIC.

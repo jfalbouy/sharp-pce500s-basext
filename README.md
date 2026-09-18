@@ -1,5 +1,7 @@
 # BASEXT — étendre le BASIC du PC-E500S
 
+*Rédigé le 2026-09-15 — mis à jour le 2026-09-16*
+
 Ajouter à l'interpréteur BASIC du **PC-E500S** ses propres **instructions** et **fonctions**, qui
 s'emploient ensuite exactement comme celles de la ROM : `PRINT LPEEK &BF100`, `A$=TRIM$ (B$)`,
 `LPOKE &BF800,&12345`. Ce ne sont pas des `CALL` déguisés, mais des mots-clés du langage.
