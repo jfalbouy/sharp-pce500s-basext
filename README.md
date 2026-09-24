@@ -1,6 +1,6 @@
 # BASEXT — étendre le BASIC du PC-E500S
 
-*Rédigé le 2026-09-15 — mis à jour le 2026-09-16*
+*Rédigé le 2026-09-15 — mis à jour le 2026-09-24*
 
 Ajouter à l'interpréteur BASIC du **PC-E500S** ses propres **instructions** et **fonctions**, qui
 s'emploient ensuite exactement comme celles de la ROM : `PRINT LPEEK &BF100`, `A$=TRIM$ (B$)`,
@@ -174,3 +174,11 @@ des relevés de mesure datés, et les modifier désynchroniserait leurs `.lst`.
 ## Points ouverts
 
 Les neuf points ouverts du mécanisme : `MODE-EMPLOI.md` §12.
+
+## Licence
+
+**PolyForm Noncommercial License 1.0.0** ([`LICENSE`](LICENSE)) — usage non commercial. Tout ce
+dépôt est une œuvre originale de Jean-François Albouy (2026). Le même choix qu'à
+[`XASM2026_CSharp`](https://github.com/jfalbouy/XASM2026_CSharp) et à
+[BASEXT-DRV](https://github.com/jfalbouy/sharp-pce500s-basext-drv), dont les œuvres amont sont des
+freewares « pas d'usage commercial ».
