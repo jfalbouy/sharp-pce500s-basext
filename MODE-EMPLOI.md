@@ -1,6 +1,6 @@
 # Créer une instruction BASIC — mode d'emploi et référentiel
 
-*Rédigé le 2026-09-15 — mis à jour le 2026-09-16*
+*Rédigé le 2026-09-15 — mis à jour le 2026-09-24*
 
 **PC-E500S, ROM 8.3.** Comment greffer ses propres mots-clés sur l'interpréteur : les
 instructions standard et leur mécanique, la procédure, les adresses de la ROM à employer, et la
@@ -1066,7 +1066,7 @@ Tous ont coûté au moins une séance.
 
 ## 13. Sources
 
-- **`Nx commandes BASIC.docx`** (SynologyDrive, `Sharp PC E500S\01- Manuels et Guides\01- Basic\`) —
+- **`Nx commandes BASIC.docx`** (documentation personnelle, non redistribuée) —
   traduction française d'un document allemand : les deux crochets, le format des deux listes, les
   bits 7 et 6, `RETF`, la retenue, `(BP+0)`, `X`. La spécification d'origine.
 - **`rom83.bin`** (`SC62015Disassembler/Docs/ROM/`), désassemblée par `e500dasm` : toutes les
