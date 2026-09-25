@@ -1,6 +1,6 @@
 # Créer une instruction BASIC — mode d'emploi et référentiel
 
-*Rédigé le 2026-09-15 — mis à jour le 2026-09-24*
+*Rédigé le 2026-09-15 — mis à jour le 2026-09-25*
 
 **PC-E500S, ROM 8.3.** Comment greffer ses propres mots-clés sur l'interpréteur : les
 instructions standard et leur mécanique, la procédure, les adresses de la ROM à employer, et la
@@ -961,7 +961,12 @@ réserve **`0C00h` = 3072 octets**, soit une zone de `0BF000h` à `0BFC00h`.
 ⛔ **`0BFC00h` est un plafond, pas une base** : une taille calculée depuis `&BFE00` vaut −512 et
 ne protège rien. ✅ VOGUE (N. Kon, 1992) réserve sa zone par la même porte.
 
-⚠️ `CALL &FFFD8` provoque un petit reset : réinstaller l'extension ensuite.
+⚠️ `CALL &FFFD8` provoque un **petit reset**. ✅ Mesuré le 2026-09-16 avec `C:\Claude\BASEXT-DRV` :
+il **conserve** les deux crochets et le maillon de la chaîne IOCS (§12, point 3). Ce qu'il met en
+jeu n'est donc pas l'installation, c'est la **protection** du code : un module en `0BF000h` reste
+sûr tant que la nouvelle réservation le couvre. À la première installation la question ne se pose
+pas — le module se charge **après** la réservation ; après avoir réduit la zone, vérifier qu'elle
+couvre encore le module avant de se servir de ses mots-clés.
 
 ### 9.3 L'ordre, qui n'est pas négociable
 
