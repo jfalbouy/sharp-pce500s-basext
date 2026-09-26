@@ -135,10 +135,10 @@
 000000                   	lcd_width:        equ 0BFC9DH ; nombre de colonnes affichables
 000000                   	lcd_height:       equ 0BFC9EH ; nombre de lignes affichables
 000000                   	iocs_call:        equ 0FFFE8H ; IOCS call entry
-000000                   	d0_cursor_type:   equ 45H   ; display_cursor_type - forme du curseur (a : bit 5 = curseur affiche, bit 3 = clignotement, bits 2-0 =
+000000                   	d0_cursor_type:   equ 45H   ; display_cursor_type - forme du curseur (a : bit 5 = curseur affiche, bit 3 = clignotement, bits 2-0 = ...
 000000                   	d0_clear_line:    equ 49H   ; display_clear_line - effacement d'une ligne ((bh) = ordonnee de la ligne)
-000000                   	d0_pattern_read:  equ 55H   ; display_pattern_read - lecture du motif de points d'une ligne vers la memoire externe ((bh) = ordonnee,
-000000                   	d0_pattern_write: equ 56H   ; display_pattern_write - ecriture du motif de points d'une ligne depuis la memoire externe ((bh) = ordonn
+000000                   	d0_pattern_read:  equ 55H   ; display_pattern_read - lecture du motif de points d'une ligne vers la memoire externe ((bh) = ...
+000000                   	d0_pattern_write: equ 56H   ; display_pattern_write - ecriture du motif de points d'une ligne depuis la memoire externe ((bh) = ...
 000000                   	
 000000                   	; --- les entrees LOINTAINES de la ROM (toutes terminees par RETF) -----------
 000000                   	chknum:   equ   0EFBF3H    ; evalue l'expression numerique, verifie le type
