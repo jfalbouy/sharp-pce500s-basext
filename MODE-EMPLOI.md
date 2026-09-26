@@ -1,6 +1,6 @@
 # Créer une instruction BASIC — mode d'emploi et référentiel
 
-*Rédigé le 2026-09-15 — mis à jour le 2026-09-25*
+*Rédigé le 2026-09-15 — mis à jour le 2026-09-26*
 
 **PC-E500S, ROM 8.3.** Comment greffer ses propres mots-clés sur l'interpréteur : les
 instructions standard et leur mécanique, la procédure, les adresses de la ROM à employer, et la
@@ -982,6 +982,17 @@ garde son token.
 
 ⛔ **Fichiers `.BAS` pour la machine** : fins de ligne **CRLF** (un LF seul donne *Line buffer
 overflow*) et **MAJUSCULES ASCII** (les minuscules sont mangées à l'import).
+
+⛔ **Pas de guillemet doublé dans une chaîne.** `PRINT "SET ""S1:X.SYS"""` — l'échappement
+des BASIC Microsoft — est **refusé** par ce BASIC : il faut `CHR$ 34`. La forme qui passe :
+
+```basic
+300 PRINT "OTER : SET ";CHR$ 34;"S1:T48.SYS";CHR$ 34;",";CHR$ 34;" ";CHR$ 34
+```
+
+⚠️ `""` **seul** reste la chaîne vide, et il est parfaitement valable : `N$=""`,
+`IF INKEY$ ="" THEN …`. Ce qui est refusé, c'est le guillemet doublé **à l'intérieur** d'une
+chaîne non vide. Relevé par J.-F. Albouy le 2026-09-26, sur six lignes de programmes d'essai.
 
 ### 9.4 Éprouver
 
