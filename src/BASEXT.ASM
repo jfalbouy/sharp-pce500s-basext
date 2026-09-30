@@ -550,10 +550,21 @@ md_sp:
         jrnz    md_type
 
 ; ⛔ BP D'APRES LA PREMIERE EVALUATION, SAUVE EN ABSOLU. Le cadre pousse par
-;    chknum vaut 15 octets, MESURE sur machine (BP 150 -> 135). Celui d'eval
-;    ne l'est PAS : je ne le suppose donc pas, et je restaure BP par sa valeur
-;    plutot que par un pmdf compte a la main. sv_bp0 et sv_bp1 etant tous deux
-;    lisibles depuis le BASIC, l'ecart se mesurera au prochain essai.
+;    chknum vaut 15 octets, MESURE sur machine (BP 150 -> 135).
+;
+; ✅ MESURE LE 2026-09-30 : CELUI D'EVAL VAUT 15 OCTETS LUI AUSSI. L'essai est
+;    le banc de « Referentiel PC-E500S SC62015 / Documentation / routines-2026
+;    .asm » §7 sur PC-E500S 8.3, qui releve BP tel que chaque mode le laisse :
+;    BP vaut 0BEh a l'entree, et les deux modes le rendent a 0AFh -- celui qui
+;    passe par eval comme celui qui passe par chknum. 0BEh - 0AFh = 15.
+;    Au passage : dec2bin ne pousse RIEN, il ecrit dans le cadre existant.
+;    Referentiel 13 §5.2.
+;
+; ⚠️ LA CONDUITE NE CHANGE PAS POUR AUTANT, et c'est volontaire : on restaure
+;    BP par sa VALEUR ABSOLUE, pas par un « pmdf +15 » compte a la main. Savoir
+;    que l'ecart vaut 15 ne rend pas le compter plus sur -- cela rend seulement
+;    la lecture du code plus claire. sv_bp1 reste ecrit : il est le temoin qui
+;    a permis la mesure, et qui la permettra encore si une ROM la dement.
         mv      [!sv_bp1],(bp_ram)
 
         callf   dec2bin         ; A -> entier 20 bits en (bp+1)..(bp+3)

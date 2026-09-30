@@ -562,10 +562,21 @@
 0BF11F 1A 9F             	        jrnz    md_type
 0BF121                   	
 0BF121                   	; ⛔ BP D'APRES LA PREMIERE EVALUATION, SAUVE EN ABSOLU. Le cadre pousse par
-0BF121                   	;    chknum vaut 15 octets, MESURE sur machine (BP 150 -> 135). Celui d'eval
-0BF121                   	;    ne l'est PAS : je ne le suppose donc pas, et je restaure BP par sa valeur
-0BF121                   	;    plutot que par un pmdf compte a la main. sv_bp0 et sv_bp1 etant tous deux
-0BF121                   	;    lisibles depuis le BASIC, l'ecart se mesurera au prochain essai.
+0BF121                   	;    chknum vaut 15 octets, MESURE sur machine (BP 150 -> 135).
+0BF121                   	;
+0BF121                   	; ✅ MESURE LE 2026-09-30 : CELUI D'EVAL VAUT 15 OCTETS LUI AUSSI. L'essai est
+0BF121                   	;    le banc de « Referentiel PC-E500S SC62015 / Documentation / routines-2026
+0BF121                   	;    .asm » §7 sur PC-E500S 8.3, qui releve BP tel que chaque mode le laisse :
+0BF121                   	;    BP vaut 0BEh a l'entree, et les deux modes le rendent a 0AFh -- celui qui
+0BF121                   	;    passe par eval comme celui qui passe par chknum. 0BEh - 0AFh = 15.
+0BF121                   	;    Au passage : dec2bin ne pousse RIEN, il ecrit dans le cadre existant.
+0BF121                   	;    Referentiel 13 §5.2.
+0BF121                   	;
+0BF121                   	; ⚠️ LA CONDUITE NE CHANGE PAS POUR AUTANT, et c'est volontaire : on restaure
+0BF121                   	;    BP par sa VALEUR ABSOLUE, pas par un « pmdf +15 » compte a la main. Savoir
+0BF121                   	;    que l'ecart vaut 15 ne rend pas le compter plus sur -- cela rend seulement
+0BF121                   	;    la lecture du code plus claire. sv_bp1 reste ecrit : il est le temoin qui
+0BF121                   	;    a permis la mesure, et qui la permettra encore si une ROM la dement.
 0BF121 30 D8 8C F9 0B EC 	        mv      [!sv_bp1],(bp_ram)
 0BF127                   	
 0BF127 05 D4 FA 0E       	        callf   dec2bin         ; A -> entier 20 bits en (bp+1)..(bp+3)
@@ -2314,6 +2325,7 @@
 0000F9h  rxd
 0BFCDEh  s1_btm
 0BFC18h  s1_cap
+0BFC1Bh  s1_tail
 0BFC15h  s1_top
 0BFC12h  s2_cap
 0BFC0Fh  s2_top
