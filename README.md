@@ -1,6 +1,6 @@
 # BASEXT — étendre le BASIC du PC-E500S
 
-*Rédigé le 2026-09-15 — mis à jour le 2026-09-24*
+*Rédigé le 2026-09-15 — mis à jour le 2026-10-14*
 
 Ajouter à l'interpréteur BASIC du **PC-E500S** ses propres **instructions** et **fonctions**, qui
 s'emploient ensuite exactement comme celles de la ROM : `PRINT LPEEK &BF100`, `A$=TRIM$ (B$)`,
@@ -29,7 +29,7 @@ sans en être le propriétaire :
 | [`JOURNAL-MISE-AU-POINT.md`](JOURNAL-MISE-AU-POINT.md) | l'histoire de la mise au point : chaque défaut, sa cause et la mesure qui l'a tranché |
 | `Referentiel PC-E500S SC62015/12-extensions-basic.md` | le référentiel d'origine : cadres, device 9, matrices, méthode |
 
-## Le module : quatorze mots-clés
+## Le module : quinze mots-clés
 
 ✅ Les douze premiers validés sur émulateur PC-E500S le 2026-09-15. ✅ `XCONSOLE` et `XCLS`
 éprouvés par J.-F. Albouy avec `essais/XCONTEST.BAS` : fenêtres, `XCLS` qui épargne les lignes
@@ -37,8 +37,19 @@ figées, retour à 4 lignes, et les cinq refus (33, 33, 33, 90, 10).
 ✅ Le **filtre d'écriture** qui confine le défilement quand `début` > 0 est éprouvé par
 J.-F. Albouy avec `essais/XSCROLL.BAS` : ligne haute figée pendant le défilement, haut et bas figés
 avec retour à la ligne automatique, puis retour à 4 lignes.
-✅ `essais/BEXTTEST.BAS` passe les 14 mots-clés (`*** 14/14 OK ***`, 2026-09-16).
-`BASEXT.ASM` fait 2709 octets, en `0BF000h`–`0BFA94h`.
+✅ `essais/BEXTTEST.BAS` passait les 14 premiers mots-clés (`*** 14/14 OK ***`, 2026-09-16).
+✅ **`DWGL`, écrit le 2026-10-14, est éprouvé sur PC-E500S le même jour** par
+`essais/DWGLTEST.BAS` (J.-F. Albouy) : tracé des cinq cases, libellé court complété et long
+tronqué par la ROM, `tag` `&81` (ligne gardée **et** parenthèses), les **sept refus** exacts
+(`33 33 33 90 90 33 10`), et le menu à dix choix avec `INKEY$ &1` et bascule de page par `PF5`.
+L'essai a été fait **depuis le pilote `BASEXT-DRV` 0.3**, mots-clés résidents dans `S1:`.
+✅ Il passe aussi **l'exécution émulée** sur PC, `essais/DWGLEMU.py` : les octets assemblés
+sont exécutés dans un interpréteur SC62015 réduit, `eval`/`dec2bin`/`iocs_call` simulés selon leur
+contrat — une vingtaine de cas, **dans le module autonome et dans le bloc relogé du pilote**.
+C'est lui qui a trouvé le seul défaut de l'écriture : `mv x,u` écrasait le point de reprise du
+BASIC (corrigé par `pushs`/`pops`, comme `INSTR`).
+`BASEXT.ASM` fait désormais **3011 octets**, en `0BF000h`–`0BFBC2h` : **61 octets libres** sous le
+plafond de la zone de 3072 octets. Le pilote `BASEXT-DRV`, lui, a de la place (version 0.3).
 
 ⚠️ **`CLS` dans une fenêtre de moins de 4 lignes affiche les libellés des touches de fonction**
 sur la ligne 3 : c'est la ROM (`CLS` appelle `fkey_display` quand `lcd_height` ≠ 4, `0F931Ah` →
@@ -64,6 +75,7 @@ filtre et faisait perdre ses lecteurs à la machine (`MODE-EMPLOI.md` §10).
 | `SREPT$ (n,s$)` | `C9h` | fonction chaîne | `n` fois `s$`, résultat ≤ 255 |
 | `XCONSOLE [début][,[n]]` | `CAh` | **instruction** | borne la console aux lignes `début`..`début+n−1` : écrit `lcd_height` et, si `début` > 0, branche un filtre d'écriture sur le handle 0 ; `XCONSOLE` seul rétablit l'écran et le débranche |
 | `XCLS` | `CFh` | **instruction** | efface la fenêtre de `XCONSOLE`, curseur en `(0,début)` |
+| `DWGL col,lig,tag,s$` | `D3h` | **instruction** | la **barre de cases** de la machine (IOCS `58h`, « display with guide line ») : 1 à 5 libellés séparés par des virgules, six caractères par case, huit colonnes. `tag` = registre `B` : bit 0 parenthèses au lieu de crochets, bit 7 garder le reste de la ligne |
 
 ## Arborescence
 
@@ -71,14 +83,17 @@ filtre et faisait perdre ses lecteurs à la machine (`MODE-EMPLOI.md` §10).
 BASEXT/
 ├── README.md                  ce fichier
 ├── MODE-EMPLOI.md             le mode d'emploi et référentiel
+├── CONCEPTION-DWGL.md         DWGL : la commande 58h, le modele du MENU, les mesures clavier
 ├── JOURNAL-MISE-AU-POINT.md   le journal de mise au point
 ├── src/
-│   ├── BASEXT.ASM             le module (14 mots-cles) -- + .OBJ .lst .UU
+│   ├── BASEXT.ASM             le module (15 mots-cles) -- + .OBJ .lst .UU
 │   ├── STREXT.ASM             module de developpement des 8 fonctions chaine -- + .obj .lst .uu
 │   ├── LSEPT.ASM              l'ancetre : la seule fonction LPEEK -- + .OBJ .lst .UU
 │   └── pce500.inc             constantes systeme, GENEREES (ne pas editer a la main)
 ├── essais/
-│   ├── BEXTTEST.BAS           les 14 mots-cles (XCONSOLE et XCLS ajoutes le 2026-09-16)
+│   ├── BEXTTEST.BAS           les 15 mots-cles (XCONSOLE et XCLS le 2026-09-16, DWGL le 2026-10-14)
+│   ├── DWGLTEST.BAS           DWGL : trace, les deux bits du tag, les refus, un menu a dix choix
+│   ├── DWGLEMU.py             DWGL execute dans un interpreteur SC62015 (PC, pas la machine)
 │   ├── XCONTEST.BAS           XCONSOLE et XCLS : trois fenetres, puis les cinq refus
 │   ├── XSCROLL.BAS            defilement confine : ligne haute figee, puis haut et bas figes
 │   ├── BEXT.BAS               LPEEK et LPOKE, litteraux puis variables
@@ -107,7 +122,7 @@ C:\Claude\xasm2026-4\bin\xasm2026-4.exe BASEXT.ASM -O -L -S -B -K
 ```basic
 POKE &BFE03,&1A,&FD,&B,0,&C,0 : CALL &FFFD8   ' reserver 3072 octets (petit reset)
 LOAD M "S1:BASEXT.OBJ" : CALL &BF000          ' charger et installer
-W=LPEEK &BFD0E : PRINT HEX$ LPEEK (W+&90)     ' verifier : BF8E7 pour cette version
+W=LPEEK &BFD0E : PRINT HEX$ LPEEK (W+&90)     ' verifier : BF9D7 pour cette version
 ```
 
 **Puis seulement** charger le programme qui emploie les mots-clés : le BASIC tokenise à la saisie.
@@ -173,7 +188,11 @@ des relevés de mesure datés, et les modifier désynchroniserait leurs `.lst`.
 
 ## Points ouverts
 
-Les neuf points ouverts du mécanisme : `MODE-EMPLOI.md` §12.
+Les dix points ouverts du mécanisme : `MODE-EMPLOI.md` §12 — le n° 8 (trois arguments ou plus) a
+été clos par `DWGL` le 2026-10-14, avec son gabarit au §8.5.
+
+La conception de `DWGL` — la commande `58h` lue dans la ROM, le modèle de l'écran `MENU`, les
+mesures de clavier — est dans [`CONCEPTION-DWGL.md`](CONCEPTION-DWGL.md).
 
 ## Licence
 

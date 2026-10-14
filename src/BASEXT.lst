@@ -139,6 +139,7 @@
 000000                   	d0_clear_line:    equ 49H   ; display_clear_line - effacement d'une ligne ((bh) = ordonnee de la ligne)
 000000                   	d0_pattern_read:  equ 55H   ; display_pattern_read - lecture du motif de points d'une ligne vers la memoire externe ((bh) = ...
 000000                   	d0_pattern_write: equ 56H   ; display_pattern_write - ecriture du motif de points d'une ligne depuis la memoire externe ((bh) = ...
+000000                   	d0_guide_line:    equ 58H   ; display_guide_line - affichage de chaines encadrees d'un guide ((bl) = X, (bh) = Y, a = nombre de ...
 000000                   	
 000000                   	; --- les entrees LOINTAINES de la ROM (toutes terminees par RETF) -----------
 000000                   	chknum:   equ   0EFBF3H    ; evalue l'expression numerique, verifie le type
@@ -180,6 +181,7 @@
 000000                   	tk_in:    equ   0C2H       ; INSTR (rend un NOMBRE)
 000000                   	tk_xc:    equ   0CAH       ; XCONSOLE (instruction) -- libre, hors BASCOM (CB-CE)
 000000                   	tk_xcl:   equ   0CFH       ; XCLS     (instruction) -- libre, hors BASCOM
+000000                   	tk_dw:    equ   0D3H       ; DWGL     (instruction) -- libre, hors BASCOM (CB-CE)
 000000                   	fhandle:  equ   0BFC6DH    ; FHANDLE : handle -> numero de bloc de controle
 000000                   	                          ; (absent de pce500.inc ; lu par 0E06A1h)
 000000                   	alloc:    equ   0EF0DDH    ; reserve BA octets sur U (U -= BA) ; carry = erreur 54
@@ -200,6 +202,7 @@
 000000                   	err_type: equ   05AH       ; erreur BASIC 90, Type mismatch -- le code que
 000000                   	                          ; chknum emploie lui-meme (0EFC04h)
 000000                   	err_buf:  equ   036H       ; erreur BASIC 54, Buffer space exceeded
+000000                   	dw_lmax:  equ   02FH       ; DWGL : longueur maxi de la chaine (47), tampon 48
 000000                   	err_div:  equ   015H       ; erreur BASIC 21, Division by zero -- le code
 000000                   	                          ; que la ROM elle-meme emploie, lu en 0ECD67h
 000000                   	
@@ -215,7 +218,7 @@
 0BF002                   	; ⚠️ Un filtre d'une version PRECEDENTE du module peut rester branche sur le
 0BF002                   	;    handle 0 (voir XCONSOLE) : ses adresses ne valent plus rien. On le
 0BF002                   	;    debranche avant tout, en rendant l'entree d'origine du pilote.
-0BF002 04 CC F8          	        call    xf_off
+0BF002 04 BC F9          	        call    xf_off
 0BF005 30 84 D1          	        mv      x,(basptr)
 0BF008                   	
 0BF008                   	; ⛔ NE SAUVER LES CROCHETS QUE S'ILS SONT ENCORE CEUX DE LA ROM.
@@ -250,13 +253,13 @@
 0BF00B 60 0F             	        cmp     a,00FH          ; encore la table de la ROM ?
 0BF00D 1A 0E             	        jrnz    deja_ext        ; non : ne rien ecraser
 0BF00F 95 84 90          	        mv      y,[x+090H]      ; l'ancienne table de mots-cles
-0BF012 AD 8F FA 0B       	        mv      [old_kw],y      ;   sauvee : de quoi desinstaller
+0BF012 AD BD FB 0B       	        mv      [old_kw],y      ;   sauvee : de quoi desinstaller
 0BF016 95 84 93          	        mv      y,[x+093H]      ; l'ancienne table de repartition
-0BF019 AD 92 FA 0B       	        mv      [old_disp],y
+0BF019 AD C0 FB 0B       	        mv      [old_disp],y
 0BF01D                   	deja_ext:
-0BF01D 0D E7 F8 0B       	        mv      y,kw_table
+0BF01D 0D D7 F9 0B       	        mv      y,kw_table
 0BF021 B5 84 90          	        mv      [x+090H],y
-0BF024 0D 4F F9 0B       	        mv      y,disp_table
+0BF024 0D 45 FA 0B       	        mv      y,disp_table
 0BF028 B5 84 93          	        mv      [x+093H],y
 0BF02B 3B                	        popu    i
 0BF02C 3C                	        popu    x
@@ -553,7 +556,7 @@
 0BF110                   	
 0BF110                   	; BP a l'entree : l'etat a rendre si l'on doit signaler une erreur, puisque
 0BF110                   	; c'est celui d'avant tout ce que nous avons pu prendre.
-0BF110 30 D8 8B F9 0B EC 	        mv      [!sv_bp0],(bp_ram)
+0BF110 30 D8 85 FA 0B EC 	        mv      [!sv_bp0],(bp_ram)
 0BF116                   	
 0BF116                   	; --- A, le dividende --------------------------------------------------------
 0BF116 05 6E F2 0E       	        callf   eval            ; expression complete -> (bp+0)
@@ -577,7 +580,7 @@
 0BF121                   	;    que l'ecart vaut 15 ne rend pas le compter plus sur -- cela rend seulement
 0BF121                   	;    la lecture du code plus claire. sv_bp1 reste ecrit : il est le temoin qui
 0BF121                   	;    a permis la mesure, et qui la permettra encore si une ROM la dement.
-0BF121 30 D8 8C F9 0B EC 	        mv      [!sv_bp1],(bp_ram)
+0BF121 30 D8 86 FA 0B EC 	        mv      [!sv_bp1],(bp_ram)
 0BF127                   	
 0BF127 05 D4 FA 0E       	        callf   dec2bin         ; A -> entier 20 bits en (bp+1)..(bp+3)
 0BF12B 1C 7A             	        jrc     md_ret
@@ -587,7 +590,7 @@
 0BF132                   	; ⛔ A EST MIS A L'ABRI ICI, ET C'EST TOUT L'INTERET DE CETTE VERSION. Le second
 0BF132                   	;    chknum ecrit sa valeur en (bp+0), et rien ne garantit qu'il ait d'abord
 0BF132                   	;    decale le cadre : la version precedente l'a suppose et perdait A.
-0BF132 DA 88 F9 0B 01    	        mvp     [!sv_a],(BP+1)
+0BF132 DA 82 FA 0B 01    	        mvp     [!sv_a],(BP+1)
 0BF137                   	
 0BF137 90 24             	        mv      a,[x++]
 0BF139 60 2C             	        cmp     a,02CH          ; ',' obligatoire : il faut DEUX arguments
@@ -654,7 +657,7 @@
 0BF162                   	;    octet. Les instructions BLOC, elles, bouclent I fois -- « mv il,00Fh /
 0BF162                   	;    mvl (000h),(00Fh) » de la ROM recopie bien 15 octets.
 0BF162                   	md_calc:
-0BF162 D2 04 88 F9 0B    	        mvp     (BP+4),[!sv_a]  ; A, revenu de l'abri
+0BF162 D2 04 82 FA 0B    	        mvp     (BP+4),[!sv_a]  ; A, revenu de l'abri
 0BF167 DC 08 00 00 00    	        mvp     (BP+8),000000H  ; reste = 0
 0BF16C CC 07 18          	        mv      (BP+7),00024    ; 24 tours : la largeur de A
 0BF16F                   	md_loop:
@@ -683,10 +686,10 @@
 0BF18E                   	;    celui d'un pmdf +15, et sv_a n'a plus a servir de pont -- ce qui le laisse
 0BF18E                   	;    porter A, donc mesurable a son tour.
 0BF18E                   	; sv_a a rendu A a la boucle : il sert maintenant de pont vers l'autre cadre.
-0BF18E DA 88 F9 0B 08    	        mvp     [!sv_a],(BP+8)          ; le reste, le temps de changer de cadre
-0BF193 30 D0 EC 8C F9 0B 	        mv      (bp_ram),[!sv_bp1]      ; le cadre du resultat, en ABSOLU
+0BF18E DA 82 FA 0B 08    	        mvp     [!sv_a],(BP+8)          ; le reste, le temps de changer de cadre
+0BF193 30 D0 EC 86 FA 0B 	        mv      (bp_ram),[!sv_bp1]      ; le cadre du resultat, en ABSOLU
 0BF199 CC 00 00          	        mv      (BP+0),000H             ; positif, simple precision
-0BF19C D2 01 88 F9 0B    	        mvp     (BP+1),[!sv_a]
+0BF19C D2 01 82 FA 0B    	        mvp     (BP+1),[!sv_a]
 0BF1A1 05 6F FB 0E       	        callf   bin2dec                 ; -> nombre BASIC en (bp+0)
 0BF1A5 3C                	        popu    x
 0BF1A6 9F                	        rc
@@ -712,30 +715,30 @@
 0BF1AE                   	
 0BF1AE                   	; le second chknum ou son dec2bin a echoue : il porte deja son code d'erreur
 0BF1AE                   	md_bad:
-0BF1AE 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF1AE 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF1B4 97                	        sc
 0BF1B5 07                	        retf
 0BF1B6                   	
 0BF1B6                   	md_syn:
-0BF1B6 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF1B6 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF1BC 08 0A             	        mv      a,err_syn
 0BF1BE 97                	        sc
 0BF1BF 07                	        retf
 0BF1C0                   	
 0BF1C0                   	md_type:
-0BF1C0 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF1C0 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF1C6 08 5A             	        mv      a,err_type      ; une chaine la ou un nombre est attendu
 0BF1C8 97                	        sc
 0BF1C9 07                	        retf
 0BF1CA                   	
 0BF1CA                   	md_neg:
-0BF1CA 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF1CA 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF1D0 08 21             	        mv      a,err_range     ; operande negatif : hors du domaine annonce
 0BF1D2 97                	        sc
 0BF1D3 07                	        retf
 0BF1D4                   	
 0BF1D4                   	md_zero:
-0BF1D4 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF1D4 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF1DA 08 15             	        mv      a,err_div
 0BF1DC 97                	        sc
 0BF1DD 07                	        retf
@@ -757,7 +760,7 @@
 0BF1EC 97                	        sc
 0BF1ED 06                	        ret
 0BF1EE                   	rd_ev:
-0BF1EE 30 D8 8B F9 0B EC 	        mv      [!sv_bp0],(bp_ram)
+0BF1EE 30 D8 85 FA 0B EC 	        mv      [!sv_bp0],(bp_ram)
 0BF1F4 05 6E F2 0E       	        callf   eval
 0BF1F8 1C 21             	        jrc     rd_er
 0BF1FA 65 00 80          	        test    (BP+0),080H
@@ -765,12 +768,12 @@
 0BF1FF 90 24             	        mv      a,[x++]
 0BF201 60 29             	        cmp     a,029H
 0BF203 18 14             	        jrz     rd_ok
-0BF205 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF205 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF20B 08 0A             	        mv      a,err_syn
 0BF20D 97                	        sc
 0BF20E 06                	        ret
 0BF20F                   	rd_ty:
-0BF20F 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF20F 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF215 08 5A             	        mv      a,err_type
 0BF217 97                	        sc
 0BF218 06                	        ret
@@ -866,14 +869,14 @@
 0BF28D                   	rtrim:
 0BF28D 08 02             	        mv      a,002H
 0BF28F                   	tr_set:
-0BF28F A8 8D F9 0B       	        mv      [!tmode],a
+0BF28F A8 87 FA 0B       	        mv      [!tmode],a
 0BF293 04 DE F1          	        call    rd1str
 0BF296 1D 73             	        jrc     st_err
 0BF298                   	
 0BF298 81 04             	        mv      il,(BP+4)
 0BF29A                   	
 0BF29A                   	; --- espaces de fin (sauf LTRIM) ---
-0BF29A 88 8D F9 0B       	        mv      a,[!tmode]
+0BF29A 88 87 FA 0B       	        mv      a,[!tmode]
 0BF29E 60 01             	        cmp     a,001H
 0BF2A0 18 19             	        jrz     tr_notrail
 0BF2A2 FD 56             	        mv      y,u
@@ -893,7 +896,7 @@
 0BF2BB                   	
 0BF2BB                   	; --- espaces de debut (sauf RTRIM) ---
 0BF2BB CC 05 00          	        mv      (BP+5),000H
-0BF2BE 88 8D F9 0B       	        mv      a,[!tmode]
+0BF2BE 88 87 FA 0B       	        mv      a,[!tmode]
 0BF2C2 60 02             	        cmp     a,002H
 0BF2C4 18 1A             	        jrz     tr_nolead
 0BF2C6 FD 56             	        mv      y,u
@@ -955,14 +958,14 @@
 0BF31C 19 06             	        jrz     rp_sp
 0BF31E 60 28             	        cmp     a,028H
 0BF320 1A 9F             	        jrnz    rp_syn0
-0BF322 30 D8 8B F9 0B EC 	        mv      [!sv_bp0],(bp_ram)
+0BF322 30 D8 85 FA 0B EC 	        mv      [!sv_bp0],(bp_ram)
 0BF328                   	
 0BF328                   	; --- arg 1 : le NOMBRE (0..255) ---
 0BF328 05 6E F2 0E       	        callf   eval
 0BF32C 1C 99             	        jrc     rp_ret
 0BF32E 65 00 80          	        test    (BP+0),080H
 0BF331 1A 9D             	        jrnz    rp_type
-0BF333 30 D8 8C F9 0B EC 	        mv      [!sv_bp1],(bp_ram)      ; cadre du resultat
+0BF333 30 D8 86 FA 0B EC 	        mv      [!sv_bp1],(bp_ram)      ; cadre du resultat
 0BF339 05 D4 FA 0E       	        callf   dec2bin
 0BF33D 1C 88             	        jrc     rp_ret
 0BF33F 65 00 08          	        test    (BP+0),008H
@@ -971,7 +974,7 @@
 0BF346 7F 03             	        or      a,(BP+3)
 0BF348 1A 9A             	        jrnz    rp_range
 0BF34A 80 01             	        mv      a,(BP+1)
-0BF34C A8 8E F9 0B       	        mv      [!rp_n],a
+0BF34C A8 88 FA 0B       	        mv      [!rp_n],a
 0BF350                   	
 0BF350 90 24             	        mv      a,[x++]
 0BF352 60 2C             	        cmp     a,02CH
@@ -991,14 +994,14 @@
 0BF36D                   	rp_ec:
 0BF36D 08 20             	        mv      a,020H
 0BF36F                   	rp_hc:
-0BF36F A8 8F F9 0B       	        mv      [!rp_c],a
+0BF36F A8 89 FA 0B       	        mv      [!rp_c],a
 0BF373                   	
 0BF373 90 24             	        mv      a,[x++]
 0BF375 60 29             	        cmp     a,029H
 0BF377 1A 61             	        jrnz    rp_syn
 0BF379                   	
 0BF379                   	; --- ajuster U (cadre du 2e eval), remplir ---
-0BF379 88 8E F9 0B       	        mv      a,[!rp_n]
+0BF379 88 88 FA 0B       	        mv      a,[!rp_n]
 0BF37D A0 06             	        mv      (BP+6),a                ; compte
 0BF37F 63 04             	        cmp     (BP+4),a                ; len(c$) - n : carry si n>len ; Z si egaux
 0BF381 18 1F             	        jrz     rp_fill
@@ -1024,14 +1027,14 @@
 0BF3A6 FD 01             	        mv      a,il
 0BF3A8 60 00             	        cmp     a,000H
 0BF3AA 18 0A             	        jrz     rp_done
-0BF3AC 88 8F F9 0B       	        mv      a,[!rp_c]
+0BF3AC 88 89 FA 0B       	        mv      a,[!rp_c]
 0BF3B0                   	rp_fl:
 0BF3B0 B0 25             	        mv      [y++],a
 0BF3B2 7C 01             	        dec     il
 0BF3B4 1B 06             	        jrnz    rp_fl
 0BF3B6                   	rp_done:
 0BF3B6 81 06             	        mv      il,(BP+6)               ; longueur, gardee dans IL
-0BF3B8 30 D0 EC 8C F9 0B 	        mv      (bp_ram),[!sv_bp1]      ; revenir au cadre du 1er eval
+0BF3B8 30 D0 EC 86 FA 0B 	        mv      (bp_ram),[!sv_bp1]      ; revenir au cadre du 1er eval
 0BF3BE 02 1C F2          	        jp      ret_str
 0BF3C1                   	
 0BF3C1                   	; --- erreurs de REPT$ ---
@@ -1043,27 +1046,27 @@
 0BF3C7                   	rp_ret:
 0BF3C7 07                	        retf
 0BF3C8                   	rp_bad:
-0BF3C8 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF3C8 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF3CE 97                	        sc
 0BF3CF 07                	        retf
 0BF3D0                   	rp_type:
-0BF3D0 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF3D0 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF3D6 08 5A             	        mv      a,err_type
 0BF3D8 97                	        sc
 0BF3D9 07                	        retf
 0BF3DA                   	rp_syn:
-0BF3DA 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF3DA 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF3E0 08 0A             	        mv      a,err_syn
 0BF3E2 97                	        sc
 0BF3E3 07                	        retf
 0BF3E4                   	rp_range:
-0BF3E4 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF3E4 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF3EA 08 21             	        mv      a,err_range
 0BF3EC 97                	        sc
 0BF3ED 07                	        retf
 0BF3EE                   	rp_buf:
 0BF3EE 94 27             	        pops    x
-0BF3F0 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF3F0 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF3F6 08 36             	        mv      a,err_buf
 0BF3F8 97                	        sc
 0BF3F9 07                	        retf
@@ -1083,10 +1086,10 @@
 0BF401 19 06             	        jrz     sr_sp
 0BF403 60 28             	        cmp     a,028H
 0BF405 1A C8             	        jrnz    sr_syn0
-0BF407 30 D8 8B F9 0B EC 	        mv      [!sv_bp0],(bp_ram)
+0BF407 30 D8 85 FA 0B EC 	        mv      [!sv_bp0],(bp_ram)
 0BF40D 05 6E F2 0E       	        callf   eval                    ; arg1 : nombre
 0BF411 1C C2             	        jrc     sr_ret
-0BF413 30 D8 8C F9 0B EC 	        mv      [!sv_bp1],(bp_ram)
+0BF413 30 D8 86 FA 0B EC 	        mv      [!sv_bp1],(bp_ram)
 0BF419 65 00 80          	        test    (BP+0),080H
 0BF41C 1A C0             	        jrnz    sr_type
 0BF41E 05 D4 FA 0E       	        callf   dec2bin
@@ -1097,7 +1100,7 @@
 0BF42B 7F 03             	        or      a,(BP+3)
 0BF42D 1A C3             	        jrnz    sr_range
 0BF42F 80 01             	        mv      a,(BP+1)
-0BF431 A8 94 F9 0B       	        mv      [!sr_n],a
+0BF431 A8 8E FA 0B       	        mv      [!sr_n],a
 0BF435 90 24             	        mv      a,[x++]
 0BF437 60 2C             	        cmp     a,02CH
 0BF439 1A AD             	        jrnz    sr_syn
@@ -1111,7 +1114,7 @@
 0BF44C 60 29             	        cmp     a,029H
 0BF44E 1A 98             	        jrnz    sr_syn
 0BF450                   	; --- resultlen = n * L, controle <= 255 (dans (BP+5)) ---
-0BF450 88 94 F9 0B       	        mv      a,[!sr_n]
+0BF450 88 8E FA 0B       	        mv      a,[!sr_n]
 0BF454 A0 05             	        mv      (BP+5),a
 0BF456 81 05             	        mv      il,(BP+5)               ; il = n
 0BF458 CC 05 00          	        mv      (BP+5),000H             ; (BP+5) = accumulateur
@@ -1139,7 +1142,7 @@
 0BF47D FD 65             	        mv      u,y
 0BF47F 12 43             	        jr      sr_done
 0BF481                   	sr_grow:
-0BF481 AE 96 F9 0B       	        mv      [!sr_src],u             ; Us = base de s$ (copie du haut), avant alloc
+0BF481 AE 90 FA 0B       	        mv      [!sr_src],u             ; Us = base de s$ (copie du haut), avant alloc
 0BF485 0A 00 00          	        mv      ba,00000H
 0BF488 80 05             	        mv      a,(BP+5)
 0BF48A 4A 06             	        sub     a,(BP+6)                ; BA = resultlen - L = (n-1)*L
@@ -1147,29 +1150,29 @@
 0BF48E 05 DD F0 0E       	        callf   alloc
 0BF492 1C 68             	        jrc     sr_buf
 0BF494 FD 56             	        mv      y,u                     ; dst = nouvelle base
-0BF496 88 94 F9 0B       	        mv      a,[!sr_n]
+0BF496 88 8E FA 0B       	        mv      a,[!sr_n]
 0BF49A 7C 00             	        dec     a
-0BF49C A8 95 F9 0B       	        mv      [!sr_cnt],a             ; n-1 copies a poser sous le haut
+0BF49C A8 8F FA 0B       	        mv      [!sr_cnt],a             ; n-1 copies a poser sous le haut
 0BF4A0                   	sr_oc:
-0BF4A0 88 95 F9 0B       	        mv      a,[!sr_cnt]
+0BF4A0 88 8F FA 0B       	        mv      a,[!sr_cnt]
 0BF4A4 60 00             	        cmp     a,000H
 0BF4A6 18 1A             	        jrz     sr_grown
-0BF4A8 8C 96 F9 0B       	        mv      x,[!sr_src]             ; src = s$ du haut (intact)
+0BF4A8 8C 90 FA 0B       	        mv      x,[!sr_src]             ; src = s$ du haut (intact)
 0BF4AC 81 06             	        mv      il,(BP+6)               ; L
 0BF4AE                   	sr_ic:
 0BF4AE 90 24             	        mv      a,[x++]
 0BF4B0 B0 25             	        mv      [y++],a
 0BF4B2 7C 01             	        dec     il
 0BF4B4 1B 08             	        jrnz    sr_ic
-0BF4B6 88 95 F9 0B       	        mv      a,[!sr_cnt]
+0BF4B6 88 8F FA 0B       	        mv      a,[!sr_cnt]
 0BF4BA 7C 00             	        dec     a
-0BF4BC A8 95 F9 0B       	        mv      [!sr_cnt],a
+0BF4BC A8 8F FA 0B       	        mv      [!sr_cnt],a
 0BF4C0 13 22             	        jr      sr_oc
 0BF4C2                   	sr_grown:
 0BF4C2 94 27             	        pops    x
 0BF4C4                   	sr_done:
 0BF4C4 81 05             	        mv      il,(BP+5)               ; longueur du resultat
-0BF4C6 30 D0 EC 8C F9 0B 	        mv      (bp_ram),[!sv_bp1]
+0BF4C6 30 D0 EC 86 FA 0B 	        mv      (bp_ram),[!sv_bp1]
 0BF4CC 02 1C F2          	        jp      ret_str
 0BF4CF                   	sr_syn0:
 0BF4CF 7C 04             	        dec     x
@@ -1179,27 +1182,27 @@
 0BF4D5                   	sr_ret:
 0BF4D5 07                	        retf
 0BF4D6                   	sr_bad:
-0BF4D6 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF4D6 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF4DC 97                	        sc
 0BF4DD 07                	        retf
 0BF4DE                   	sr_type:
-0BF4DE 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF4DE 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF4E4 08 5A             	        mv      a,err_type
 0BF4E6 97                	        sc
 0BF4E7 07                	        retf
 0BF4E8                   	sr_syn:
-0BF4E8 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF4E8 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF4EE 08 0A             	        mv      a,err_syn
 0BF4F0 97                	        sc
 0BF4F1 07                	        retf
 0BF4F2                   	sr_range:
-0BF4F2 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF4F2 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF4F8 08 21             	        mv      a,err_range
 0BF4FA 97                	        sc
 0BF4FB 07                	        retf
 0BF4FC                   	sr_buf:
 0BF4FC 94 27             	        pops    x
-0BF4FE 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF4FE 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF504 08 36             	        mv      a,err_buf
 0BF506 97                	        sc
 0BF507 07                	        retf
@@ -1218,11 +1221,11 @@
 0BF50F 19 06             	        jrz     in_sp
 0BF511 60 28             	        cmp     a,028H
 0BF513 1A ED             	        jrnz    in_syn0
-0BF515 30 D8 8B F9 0B EC 	        mv      [!sv_bp0],(bp_ram)
+0BF515 30 D8 85 FA 0B EC 	        mv      [!sv_bp0],(bp_ram)
 0BF51B                   	; --- arg 1 : nombre (debut) OU chaine (texte) ---
 0BF51B 05 6E F2 0E       	        callf   eval
 0BF51F 1C E7             	        jrc     in_ret
-0BF521 30 D8 8C F9 0B EC 	        mv      [!sv_bp1],(bp_ram)
+0BF521 30 D8 86 FA 0B EC 	        mv      [!sv_bp1],(bp_ram)
 0BF527 65 00 80          	        test    (BP+0),080H
 0BF52A 1A 2E             	        jrnz    in_a1str
 0BF52C 05 D4 FA 0E       	        callf   dec2bin             ; debut numerique
@@ -1235,7 +1238,7 @@
 0BF53D 80 01             	        mv      a,(BP+1)
 0BF53F 60 00             	        cmp     a,000H
 0BF541 18 E2             	        jrz     in_range            ; debut 0 interdit (1-based)
-0BF543 A8 90 F9 0B       	        mv      [!in_start],a
+0BF543 A8 8A FA 0B       	        mv      [!in_start],a
 0BF547 90 24             	        mv      a,[x++]
 0BF549 60 2C             	        cmp     a,02CH
 0BF54B 1A CE             	        jrnz    in_syn
@@ -1246,10 +1249,10 @@
 0BF558 12 06             	        jr      in_havetext
 0BF55A                   	in_a1str:
 0BF55A 08 01             	        mv      a,001H
-0BF55C A8 90 F9 0B       	        mv      [!in_start],a
+0BF55C A8 8A FA 0B       	        mv      [!in_start],a
 0BF560                   	in_havetext:
 0BF560 80 04             	        mv      a,(BP+4)
-0BF562 A8 91 F9 0B       	        mv      [!in_lt],a          ; longueur du texte
+0BF562 A8 8B FA 0B       	        mv      [!in_lt],a          ; longueur du texte
 0BF566 90 24             	        mv      a,[x++]
 0BF568 60 2C             	        cmp     a,02CH
 0BF56A 1A AF             	        jrnz    in_syn
@@ -1264,15 +1267,15 @@
 0BF57D                   	; (BP+5) = maxp ; (BP+6) = octet temporaire de comparaison ; p en variable module
 0BF57D                   	; (on n'utilise QUE (BP+5)/(BP+6), prouves surs ; le cadre d'eval peut ne pas
 0BF57D                   	;  atteindre (BP+7)).
-0BF57D 88 91 F9 0B       	        mv      a,[!in_lt]
+0BF57D 88 8B FA 0B       	        mv      a,[!in_lt]
 0BF581 4A 04             	        sub     a,(BP+4)            ; LT - LS
 0BF583 1C 52             	        jrc     in_notfound         ; LS > LT
 0BF585 A0 05             	        mv      (BP+5),a            ; maxp (0-based)
-0BF587 88 90 F9 0B       	        mv      a,[!in_start]
+0BF587 88 8A FA 0B       	        mv      a,[!in_start]
 0BF58B 7C 00             	        dec     a
-0BF58D A8 93 F9 0B       	        mv      [!in_p],a           ; p = debut - 1
+0BF58D A8 8D FA 0B       	        mv      [!in_p],a           ; p = debut - 1
 0BF591                   	in_outer:
-0BF591 88 93 F9 0B       	        mv      a,[!in_p]
+0BF591 88 8D FA 0B       	        mv      a,[!in_p]
 0BF595 63 05             	        cmp     (BP+5),a            ; maxp - p : carry si p>maxp
 0BF597 1C 3E             	        jrc     in_notfound
 0BF599                   	in_cmp:
@@ -1280,7 +1283,7 @@
 0BF59B FD 46             	        mv      x,u
 0BF59D 80 04             	        mv      a,(BP+4)
 0BF59F 45 40             	        add     x,a
-0BF5A1 88 93 F9 0B       	        mv      a,[!in_p]
+0BF5A1 88 8D FA 0B       	        mv      a,[!in_p]
 0BF5A5 45 40             	        add     x,a                 ; X = texte + p
 0BF5A7 FD 56             	        mv      y,u                 ; Y = recherche
 0BF5A9 81 04             	        mv      il,(BP+4)
@@ -1297,27 +1300,27 @@
 0BF5BD 1B 0E             	        jrnz    in_ck
 0BF5BF                   	in_hit:
 0BF5BF 94 27             	        pops    x
-0BF5C1 88 93 F9 0B       	        mv      a,[!in_p]
+0BF5C1 88 8D FA 0B       	        mv      a,[!in_p]
 0BF5C5 6C 00             	        inc     a
 0BF5C7 12 10             	        jr      in_found
 0BF5C9                   	in_miss:
 0BF5C9 94 27             	        pops    x
-0BF5CB 88 93 F9 0B       	        mv      a,[!in_p]
+0BF5CB 88 8D FA 0B       	        mv      a,[!in_p]
 0BF5CF 6C 00             	        inc     a
-0BF5D1 A8 93 F9 0B       	        mv      [!in_p],a
+0BF5D1 A8 8D FA 0B       	        mv      [!in_p],a
 0BF5D5 13 46             	        jr      in_outer
 0BF5D7                   	in_notfound:
 0BF5D7 08 00             	        mv      a,000H
 0BF5D9                   	in_found:
-0BF5D9 A8 92 F9 0B       	        mv      [!in_res],a
+0BF5D9 A8 8C FA 0B       	        mv      [!in_res],a
 0BF5DD                   	; --- liberer les deux chaines de U, puis rendre le nombre ---
 0BF5DD 80 04             	        mv      a,(BP+4)
 0BF5DF 45 60             	        add     u,a
-0BF5E1 88 91 F9 0B       	        mv      a,[!in_lt]
+0BF5E1 88 8B FA 0B       	        mv      a,[!in_lt]
 0BF5E5 45 60             	        add     u,a
-0BF5E7 30 D0 EC 8C F9 0B 	        mv      (bp_ram),[!sv_bp1]
+0BF5E7 30 D0 EC 86 FA 0B 	        mv      (bp_ram),[!sv_bp1]
 0BF5ED CC 00 00          	        mv      (BP+0),000H
-0BF5F0 88 92 F9 0B       	        mv      a,[!in_res]
+0BF5F0 88 8C FA 0B       	        mv      a,[!in_res]
 0BF5F4 A0 01             	        mv      (BP+1),a
 0BF5F6 CD 02 00 00       	        mvw     (BP+2),00000H
 0BF5FA 2C                	        pushu   x               ; ⛔ bin2dec ECRASE X (le point de reprise) : le sauver
@@ -1333,21 +1336,21 @@
 0BF608                   	in_ret:
 0BF608 07                	        retf
 0BF609                   	in_bad:
-0BF609 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF609 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF60F 97                	        sc
 0BF610 07                	        retf
 0BF611                   	in_type:
-0BF611 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF611 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF617 08 5A             	        mv      a,err_type
 0BF619 97                	        sc
 0BF61A 07                	        retf
 0BF61B                   	in_syn:
-0BF61B 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF61B 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF621 08 0A             	        mv      a,err_syn
 0BF623 97                	        sc
 0BF624 07                	        retf
 0BF625                   	in_range:
-0BF625 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF625 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF62B 08 21             	        mv      a,err_range
 0BF62D 97                	        sc
 0BF62E 07                	        retf
@@ -1394,11 +1397,11 @@
 0BF62F                   	; 0FB2D9h. BP est rendu en ABSOLU (sv_bp0) sur tous les chemins : une
 0BF62F                   	; instruction rend BP inchange (MODE-EMPLOI §6.1).
 0BF62F                   	xconsole:
-0BF62F 30 D8 8B F9 0B EC 	        mv      [!sv_bp0],(bp_ram)      ; BP d'entree
+0BF62F 30 D8 85 FA 0B EC 	        mv      [!sv_bp0],(bp_ram)      ; BP d'entree
 0BF635 08 00             	        mv      a,000H
-0BF637 A8 99 F9 0B       	        mv      [!xc_t],a               ; debut par defaut : 0
+0BF637 A8 93 FA 0B       	        mv      [!xc_t],a               ; debut par defaut : 0
 0BF63B 08 FF             	        mv      a,0FFH
-0BF63D A8 9A F9 0B       	        mv      [!xc_c],a               ; nombre : absent
+0BF63D A8 94 FA 0B       	        mv      [!xc_c],a               ; nombre : absent
 0BF641 04 D0 F6          	        call    xc_skip                 ; A = premier non-espace, X dessus
 0BF644 60 3A             	        cmp     a,03AH                  ; ':'
 0BF646 18 36             	        jrz     xc_apply
@@ -1408,7 +1411,7 @@
 0BF64E 18 18             	        jrz     xc_comma                ; XCONSOLE ,n : debut omis
 0BF650 04 DB F6          	        call    xc_num                  ; le debut
 0BF653 1C 73             	        jrc     xc_err
-0BF655 A8 99 F9 0B       	        mv      [!xc_t],a
+0BF655 A8 93 FA 0B       	        mv      [!xc_t],a
 0BF659 04 D0 F6          	        call    xc_skip
 0BF65C 60 3A             	        cmp     a,03AH
 0BF65E 18 1E             	        jrz     xc_apply
@@ -1425,14 +1428,14 @@
 0BF673 18 09             	        jrz     xc_apply                ; XCONSOLE d, : nombre omis
 0BF675 04 DB F6          	        call    xc_num                  ; le nombre de lignes
 0BF678 1C 4E             	        jrc     xc_err
-0BF67A A8 9A F9 0B       	        mv      [!xc_c],a
+0BF67A A8 94 FA 0B       	        mv      [!xc_c],a
 0BF67E                   	
 0BF67E                   	xc_apply:
-0BF67E 88 99 F9 0B       	        mv      a,[!xc_t]
+0BF67E 88 93 FA 0B       	        mv      a,[!xc_t]
 0BF682 60 04             	        cmp     a,004H
 0BF684 1E 40             	        jrnc    xc_range                ; debut au-dela de la ligne 3
 0BF686 FD 10             	        mv      il,a                    ; IL = debut
-0BF688 88 9A F9 0B       	        mv      a,[!xc_c]
+0BF688 88 94 FA 0B       	        mv      a,[!xc_c]
 0BF68C 60 FF             	        cmp     a,0FFH
 0BF68E 18 0E             	        jrz     xc_full                 ; nombre omis : jusqu'en bas
 0BF690 60 00             	        cmp     a,000H
@@ -1446,20 +1449,20 @@
 0BF69E 08 04             	        mv      a,004H
 0BF6A0                   	xc_store:
 0BF6A0 A8 9E FC 0B       	        mv      [lcd_height],a
-0BF6A4 A9 9B F9 0B       	        mv      [!xc_top],il            ; le debut, que XCLS et le filtre reliront
+0BF6A4 A9 95 FA 0B       	        mv      [!xc_top],il            ; le debut, que XCLS et le filtre reliront
 0BF6A8 2C                	        pushu   x                       ; xf_on et xf_off se servent de X et de I
 0BF6A9 2B                	        pushu   i
 0BF6AA FD 01             	        mv      a,il
 0BF6AC 60 00             	        cmp     a,000H
 0BF6AE 18 05             	        jrz     xc_unhook
-0BF6B0 04 A6 F8          	        call    xf_on                   ; fenetre haute : le filtre est necessaire
+0BF6B0 04 96 F9          	        call    xf_on                   ; fenetre haute : le filtre est necessaire
 0BF6B3 12 03             	        jr      xc_hooked
 0BF6B5                   	xc_unhook:
-0BF6B5 04 CC F8          	        call    xf_off                  ; debut 0 : la ROM suffit
+0BF6B5 04 BC F9          	        call    xf_off                  ; debut 0 : la ROM suffit
 0BF6B8                   	xc_hooked:
 0BF6B8 3B                	        popu    i
 0BF6B9 3C                	        popu    x
-0BF6BA 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF6BA 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF6C0 9F                	        rc
 0BF6C1 07                	        retf
 0BF6C2                   	
@@ -1469,7 +1472,7 @@
 0BF6C6                   	xc_range:
 0BF6C6 08 21             	        mv      a,err_range
 0BF6C8                   	xc_err:
-0BF6C8 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF6C8 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF6CE 97                	        sc
 0BF6CF 07                	        retf
 0BF6D0                   	
@@ -1500,7 +1503,7 @@
 0BF6F3 7F 03             	        or      a,(BP+3)
 0BF6F5 1A 0E             	        jrnz    xn_range                ; au-dela de 255
 0BF6F7 80 01             	        mv      a,(BP+1)
-0BF6F9 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]      ; rendre le cadre d'eval
+0BF6F9 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]      ; rendre le cadre d'eval
 0BF6FF 9F                	        rc
 0BF700 06                	        ret
 0BF701                   	xn_type:
@@ -1509,7 +1512,7 @@
 0BF705                   	xn_range:
 0BF705 08 21             	        mv      a,err_range
 0BF707                   	xn_fail:
-0BF707 30 D0 EC 8B F9 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF707 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
 0BF70D 97                	        sc
 0BF70E 06                	        ret
 0BF70F                   	
@@ -1531,10 +1534,10 @@
 0BF70F                   	xcls:
 0BF70F 2C                	        pushu   x                       ; le point de reprise
 0BF710 2B                	        pushu   i
-0BF711 88 9B F9 0B       	        mv      a,[!xc_top]
-0BF715 A8 9C F9 0B       	        mv      [!xcl_y],a
+0BF711 88 95 FA 0B       	        mv      a,[!xc_top]
+0BF715 A8 96 FA 0B       	        mv      [!xcl_y],a
 0BF719                   	xl_loop:
-0BF719 88 9C F9 0B       	        mv      a,[!xcl_y]
+0BF719 88 96 FA 0B       	        mv      a,[!xcl_y]
 0BF71D 30 A0 D5          	        mv      (bh),a                  ; ordonnee de la ligne (argument de 49h)
 0BF720 88 9E FC 0B       	        mv      a,[lcd_height]
 0BF724 30 63 D5          	        cmp     (bh),a                  ; ligne - hauteur : NC = hors fenetre
@@ -1542,9 +1545,9 @@
 0BF729 30 CD D6 00 00    	        mvw     (cl),00000H             ; device 0, lecteur 0
 0BF72E 09 49             	        mv      il,d0_clear_line
 0BF730 05 E8 FF 0F       	        callf   iocs_call
-0BF734 88 9C F9 0B       	        mv      a,[!xcl_y]
+0BF734 88 96 FA 0B       	        mv      a,[!xcl_y]
 0BF738 6C 00             	        inc     a
-0BF73A A8 9C F9 0B       	        mv      [!xcl_y],a
+0BF73A A8 96 FA 0B       	        mv      [!xcl_y],a
 0BF73E 13 27             	        jr      xl_loop
 0BF740                   	xl_done:
 0BF740 09 45             	        mv      il,d0_cursor_type
@@ -1553,7 +1556,7 @@
 0BF749 05 E8 FF 0F       	        callf   iocs_call
 0BF74D 08 00             	        mv      a,000H
 0BF74F A8 27 FC 0B       	        mv      [scrn_crsr_x],a
-0BF753 88 9B F9 0B       	        mv      a,[!xc_top]
+0BF753 88 95 FA 0B       	        mv      a,[!xc_top]
 0BF757 A8 28 FC 0B       	        mv      [scrn_crsr_y],a
 0BF75B 30 84 D1          	        mv      x,(basptr)
 0BF75E 90 84 70          	        mv      a,[x+070H]
@@ -1565,407 +1568,592 @@
 0BF769 07                	        retf
 0BF76A                   	
 0BF76A                   	; ============================================================================
-0BF76A                   	; LE FILTRE D'ECRITURE DE STDO:  --  confine le defilement a la fenetre
+0BF76A                   	; L'INSTRUCTION DWGL colonne,ligne,tag,chaine$  --  la barre de cases
 0BF76A                   	; ============================================================================
-0BF76A                   	; ⛔ LE FILTRE NE SE CHAINE PAS DANS d_link, ET C'EST LA MACHINE QUI LE DIT.
-0BF76A                   	;    L'ecriture par le FCS ne passe PAS par iocs_call : en 0E0907h, il saute
-0BF76A                   	;    (retf) a l'adresse rangee en [bloc+2] du bloc de controle du handle, et
-0BF76A                   	;    cette adresse est memorisee a l'OUVERTURE (0E07F1h). Releve dans la System
-0BF76A                   	;    Data Area d'un PC-E500S reel (Samples/Extraction/s1-1.bin) :
+0BF76A                   	; La « ligne de guide » du manuel technique (IOCS 058h du device 0), celle de
+0BF76A                   	; l'ecran MENU et des libelles de touches de fonction, ouverte au BASIC :
 0BF76A                   	;
-0BF76A                   	;      bloc du handle 0 en 0BEE48h : 00 00 E7 21 0F A2 02
-0BF76A                   	;                                    |  |  \______/ \
-0BF76A                   	;                                device lecteur  0F21E7h = drv_display, attribut
+0BF76A                   	;   DWGL 0,3,0,"BASIC ,DUMPM ,DRIVER,TRDOS ,SUITE "
+0BF76A                   	;        |  | |  les libelles, separes par des virgules : 1 a 5 cases
+0BF76A                   	;        |  | le registre B : bit 0 = parentheses au lieu de crochets,
+0BF76A                   	;        |  |                 bit 7 = garder le reste de la ligne
+0BF76A                   	;        |  la ligne, 0 a 3
+0BF76A                   	;        la colonne de la premiere case
 0BF76A                   	;
-0BF76A                   	;    Un en-tete ajoute en tete de d_link (la methode de MEMCHECK) ne verrait donc
-0BF76A                   	;    jamais un PRINT. On remplace l'adresse du bloc du handle 0 par xf_entry, et
-0BF76A                   	;    le filtre transmet a l'ancienne adresse -- recopiee dans les operandes de
-0BF76A                   	;    xf_pass et xf_call (auto-modification, comme MEMCHECK). Si la ROM rouvre
-0BF76A                   	;    STDO:, le filtre disparait simplement : l'echec est sans danger.
+0BF76A                   	; ⛔ SIX CARACTERES PAR CASE, ET C'EST LA ROM QUI LE FIGE (« mv il,006h » en
+0BF76A                   	;    0F2CB5h) : une case fait huit colonnes, cinq cases remplissent la ligne de
+0BF76A                   	;    40. Un libelle plus COURT est complete par des espaces par la ROM elle-meme
+0BF76A                   	;    (LOC_F2CE1), un plus LONG est tronque -- elle saute jusqu'au 0FFh suivant
+0BF76A                   	;    (LOC_F2CCF). DWGL n'a donc ni a completer ni a tronquer : il lui suffit de
+0BF76A                   	;    remplacer chaque virgule par le 0FFh qui termine un libelle.
 0BF76A                   	;
-0BF76A                   	; LE BLOC DE CONTROLE se trouve comme en 0E0698h / 0E066Ah :
-0BF76A                   	;    numero = [fhandle + handle] ; bloc = [(iocsw)] + [(iocsw)+25h]
-0BF76A                   	;    + numero * 1Fh, borne par [(iocsw)+27h] ; octet 0 = device (0FFh = libre).
+0BF76A                   	; ⛔ PAS DE REPLI DE LIGNE : l'ecriture d'un caractere refuse des que la colonne
+0BF76A                   	;    atteint 40 ou la ligne 4 (0F23C3h), et les cases perdues le sont EN
+0BF76A                   	;    SILENCE. DWGL refuse donc lui-meme (erreur 33) : ligne >= 4, plus de cinq
+0BF76A                   	;    cases, ou colonne + 8 x cases > 40. Pour dix choix, deux appels -- comme la
+0BF76A                   	;    ROM, qui garde un drapeau de page et ajoute 5 a l'indice (referentiel
+0BF76A                   	;    04-fcs-iocs.md §2.4quater, BASEXT/CONCEPTION-DWGL.md §3).
 0BF76A                   	;
-0BF76A                   	; LE PRINCIPE : DEFILER AVANT LA ROM. Pour un octet, le pilote fait (0F2A47h) :
-0BF76A                   	;    affichable        : retour a la ligne differe (0F2B57h : X >= largeur ->
-0BF76A                   	;                        X=0, Y+1), puis 0F2B6Ah (Y >= lcd_height -> defilement
-0BF76A                   	;                        de la ROM, Y = lcd_height-1), puis l'affichage ;
-0BF76A                   	;    0Dh               : 0F2B6Ah seul ;
-0BF76A                   	;    08 09 0A 0B 1C 1D 1F : 0F2B57h puis 0F2B6Ah ;
-0BF76A                   	;    07 0C 1E et le reste : pas de 0F2B6Ah.
-0BF76A                   	; Le filtre calcule la ligne que verra 0F2B6Ah. Si la ROM allait defiler, il
-0BF76A                   	; defile LUI-MEME les lignes debut .. lcd_height-1 (55h pattern_read, 56h
-0BF76A                   	; pattern_write, 49h clear_line), puis remonte Y pour que la ROM ne defile plus.
-0BF76A                   	; L'octet est ensuite transmis tel quel : le pilote fait tout le reste.
+0BF76A                   	; ⚠️ DWGL N'EST PAS fkey_display : il ne refait aucun de ses trois controles. Il
+0BF76A                   	;    ecrit sur la ligne demandee, qu'elle porte du texte ou non -- c'est a
+0BF76A                   	;    l'appelant de lui reserver la place (CONSOLE 0, ou XCONSOLE). C'est le
+0BF76A                   	;    parti de GUIDE.ASM, eprouve sur PC-E500S le 2026-10-12.
 0BF76A                   	;
-0BF76A                   	; ⚠️ SEULS LES ECRITURES DU HANDLE 0 SONT VUES. Un OPEN "SCRN:" ouvre un autre
-0BF76A                   	;    handle, qui garde l'adresse de la ROM.
-0BF76A                   	; ⚠️ NE PAS RECHARGER LE MODULE FILTRE BRANCHE. Entre LOAD M et CALL &BF000, le
-0BF76A                   	;    handle 0 designerait du code ecrase. Faire XCONSOLE avant de recharger ;
-0BF76A                   	;    CALL &BF000 debranche ensuite tout filtre reste dans la zone du module.
-0BF76A                   	
-0BF76A                   	; xf_entry -- l'entree du filtre : memes registres qu'une entree de pilote.
-0BF76A                   	xf_entry:
-0BF76A 2A                	        pushu   ba
-0BF76B FD 23             	        mv      ba,i
-0BF76D 60 0D             	        cmp     a,00DH                  ; write_byte
-0BF76F 18 09             	        jrz     xf_wbyte
-0BF771 60 0B             	        cmp     a,00BH                  ; write_block
-0BF773 18 13             	        jrz     xf_wblock
-0BF775 3A                	        popu    ba
-0BF776                   	xf_pass:
-0BF776 03 E7 21 0F       	        jpf     0F21E7H                 ; OPERANDE REECRIT par xf_on
-0BF77A                   	xf_wbyte:
-0BF77A 3A                	        popu    ba                      ; A = l'octet, I = 0Dh
-0BF77B 2C                	        pushu   x
-0BF77C 2D                	        pushu   y
-0BF77D 2B                	        pushu   i
-0BF77E 2A                	        pushu   ba
-0BF77F 04 AC F7          	        call    xf_pre
-0BF782 3A                	        popu    ba
-0BF783 3B                	        popu    i
-0BF784 3D                	        popu    y
-0BF785 3C                	        popu    x
-0BF786 13 12             	        jr      xf_pass
-0BF788                   	
-0BF788                   	; write_block : X = source, Y = compte. On le rend octet par octet au pilote,
-0BF788                   	; chacun precede de son controle ; Y est rendu tel quel, comme 0F2A18h.
-0BF788                   	xf_wblock:
-0BF788 3A                	        popu    ba
-0BF789 2D                	        pushu   y
-0BF78A                   	xb_lp:
-0BF78A 6C 05             	        inc     y
-0BF78C 7C 05             	        dec     y
-0BF78E 18 14             	        jrz     xb_end
-0BF790 90 24             	        mv      a,[x++]
-0BF792 2C                	        pushu   x
-0BF793 2D                	        pushu   y
-0BF794 28                	        pushu   a
-0BF795 04 AC F7          	        call    xf_pre
-0BF798 38                	        popu    a
-0BF799 09 0D             	        mv      il,00DH
-0BF79B 04 A7 F7          	        call    xf_call                 ; write_byte de l'ancien pilote
-0BF79E 3D                	        popu    y
-0BF79F 3C                	        popu    x
-0BF7A0 7C 05             	        dec     y
-0BF7A2 13 1A             	        jr      xb_lp
-0BF7A4                   	xb_end:
-0BF7A4 3D                	        popu    y
-0BF7A5 9F                	        rc
-0BF7A6 07                	        retf
-0BF7A7                   	
-0BF7A7                   	; xf_call -- appelle l'ancien pilote, commande dans IL.  APPEL PROCHE.
-0BF7A7                   	xf_call:
-0BF7A7 05 E7 21 0F       	        callf   0F21E7H                 ; OPERANDE REECRIT par xf_on
-0BF7AB 06                	        ret
-0BF7AC                   	
-0BF7AC                   	; xf_pre -- A = l'octet a ecrire. Defile la fenetre si la ROM allait le faire.
-0BF7AC                   	;           Detruit A, I, X, Y, (bl), (bh).  APPEL PROCHE.
-0BF7AC                   	xf_pre:
-0BF7AC 30 A0 D4          	        mv      (bl),a                  ; l'octet, le temps de le classer
-0BF7AF 88 9B F9 0B       	        mv      a,[!xc_top]
-0BF7B3 60 00             	        cmp     a,000H
-0BF7B5 18 6E             	        jrz     xp_none                 ; debut 0 : la ROM suffit
-0BF7B7 30 A0 D5          	        mv      (bh),a
-0BF7BA 88 9E FC 0B       	        mv      a,[lcd_height]
-0BF7BE 30 63 D5          	        cmp     (bh),a                  ; debut - hauteur : NC = pas de fenetre
-0BF7C1 1E 62             	        jrnc    xp_none
-0BF7C3 30 80 D4          	        mv      a,(bl)
-0BF7C6 60 20             	        cmp     a,020H
-0BF7C8 1E 1B             	        jrnc    xp_wrap                 ; affichable
-0BF7CA 66 29 FC 0B 40    	        test    [ctrl_disp],040H
-0BF7CF 1A 14             	        jrnz    xp_wrap                 ; code de controle affiche (0F2A56h)
-0BF7D1 60 0D             	        cmp     a,00DH
-0BF7D3 18 25             	        jrz     xp_nw                   ; CR : 0F2B6Ah sans 0F2B57h
-0BF7D5 60 08             	        cmp     a,008H
-0BF7D7 1C 4C             	        jrc     xp_none                 ; 00-07
-0BF7D9 60 0C             	        cmp     a,00CH
-0BF7DB 1C 08             	        jrc     xp_wrap                 ; 08 09 0A 0B
-0BF7DD 60 1C             	        cmp     a,01CH
-0BF7DF 1C 44             	        jrc     xp_none                 ; 0C-1B
-0BF7E1 60 1E             	        cmp     a,01EH
-0BF7E3 18 40             	        jrz     xp_none                 ; 1E, curseur vers le haut
-0BF7E5                   	xp_wrap:                                ; 1C 1D 1F et les affichables
-0BF7E5 09 00             	        mv      il,000H
-0BF7E7 30 D0 D4 27 FC 0B 	        mv      (bl),[scrn_crsr_x]
-0BF7ED 88 9D FC 0B       	        mv      a,[lcd_width]
-0BF7F1 30 63 D4          	        cmp     (bl),a                  ; X - largeur : NC = retour differe
-0BF7F4 1C 06             	        jrc     xp_chk
-0BF7F6 09 01             	        mv      il,001H
-0BF7F8 12 02             	        jr      xp_chk
-0BF7FA                   	xp_nw:
-0BF7FA 09 00             	        mv      il,000H
-0BF7FC                   	xp_chk:
-0BF7FC 88 28 FC 0B       	        mv      a,[scrn_crsr_y]
-0BF800 46 01             	        add     a,il                    ; la ligne que verra 0F2B6Ah
-0BF802 30 A0 D5          	        mv      (bh),a
-0BF805 88 9E FC 0B       	        mv      a,[lcd_height]
-0BF809 30 63 D5          	        cmp     (bh),a                  ; NC : la ROM defilerait
-0BF80C 1C 17             	        jrc     xp_none
-0BF80E A9 9D F9 0B       	        mv      [!xf_w],il
-0BF812 04 26 F8          	        call    xf_scroll
-0BF815 88 9E FC 0B       	        mv      a,[lcd_height]
-0BF819 7C 00             	        dec     a
-0BF81B 89 9D F9 0B       	        mv      il,[!xf_w]
-0BF81F 4E 01             	        sub     a,il                    ; lcd_height-1-retour : plus de defilement ROM
-0BF821 A8 28 FC 0B       	        mv      [scrn_crsr_y],a
-0BF825                   	xp_none:
-0BF825 06                	        ret
-0BF826                   	
-0BF826                   	; xf_scroll -- remonte d'une ligne les lignes debut+1 .. lcd_height-1, puis
-0BF826                   	;              efface la derniere.  APPEL PROCHE.
-0BF826                   	xf_scroll:
-0BF826 88 9B F9 0B       	        mv      a,[!xc_top]
-0BF82A A8 9E F9 0B       	        mv      [!xf_y],a
-0BF82E                   	xs_lp:
-0BF82E 88 9E F9 0B       	        mv      a,[!xf_y]
-0BF832 6C 00             	        inc     a
-0BF834 30 A0 D5          	        mv      (bh),a                  ; la ligne du dessous
-0BF837 88 9E FC 0B       	        mv      a,[lcd_height]
-0BF83B 30 63 D5          	        cmp     (bh),a
-0BF83E 1E 25             	        jrnc    xs_clr                  ; plus rien a remonter
-0BF840 0C 9F F9 0B       	        mv      x,xf_buf
-0BF844 09 55             	        mv      il,d0_pattern_read
-0BF846 04 A7 F7          	        call    xf_call
-0BF849 88 9E F9 0B       	        mv      a,[!xf_y]
-0BF84D 30 A0 D5          	        mv      (bh),a
-0BF850 0C 9F F9 0B       	        mv      x,xf_buf
-0BF854 09 56             	        mv      il,d0_pattern_write
-0BF856 04 A7 F7          	        call    xf_call
-0BF859 88 9E F9 0B       	        mv      a,[!xf_y]
-0BF85D 6C 00             	        inc     a
-0BF85F A8 9E F9 0B       	        mv      [!xf_y],a
-0BF863 13 37             	        jr      xs_lp
-0BF865                   	xs_clr:
-0BF865 88 9E FC 0B       	        mv      a,[lcd_height]
-0BF869 7C 00             	        dec     a
-0BF86B 30 A0 D5          	        mv      (bh),a
-0BF86E 09 49             	        mv      il,d0_clear_line
-0BF870 04 A7 F7          	        call    xf_call
-0BF873 06                	        ret
-0BF874                   	
-0BF874                   	; xf_fcb -- X = le bloc de controle du handle 0 ; CY=1 s'il n'est pas l'ecran.
-0BF874                   	;           Detruit A, I, (bl).  APPEL PROCHE.
-0BF874                   	xf_fcb:
-0BF874 88 6D FC 0B       	        mv      a,[fhandle]             ; handle 0 -> numero de bloc
-0BF878 30 A0 D4          	        mv      (bl),a
-0BF87B 30 84 E6          	        mv      x,(iocsw)
-0BF87E 90 84 27          	        mv      a,[x+027H]              ; nombre de blocs
-0BF881 30 63 D4          	        cmp     (bl),a
-0BF884 1E 1E             	        jrnc    xfc_no
-0BF886 93 84 25          	        mv      i,[x+025H]
-0BF889 45 43             	        add     x,i                     ; le premier bloc
-0BF88B 0B 1F 00          	        mv      i,0001FH                ; 31 octets par bloc
-0BF88E                   	xfc_lp:
-0BF88E 30 80 D4          	        mv      a,(bl)
-0BF891 60 00             	        cmp     a,000H
-0BF893 18 07             	        jrz     xfc_at
-0BF895 45 43             	        add     x,i
-0BF897 30 7D D4          	        dec     (bl)
-0BF89A 13 0E             	        jr      xfc_lp
-0BF89C                   	xfc_at:
-0BF89C 90 04             	        mv      a,[x]                   ; le device du bloc
-0BF89E 60 00             	        cmp     a,000H
-0BF8A0 1A 02             	        jrnz    xfc_no                  ; libre (0FFh) ou pas l'ecran
-0BF8A2 9F                	        rc
-0BF8A3 06                	        ret
-0BF8A4                   	xfc_no:
-0BF8A4 97                	        sc
-0BF8A5 06                	        ret
-0BF8A6                   	
-0BF8A6                   	; xf_on -- branche le filtre sur le handle 0.  APPEL PROCHE.
-0BF8A6                   	;          Deja branche (adresse dans la zone du module) : ne rien faire, sans
-0BF8A6                   	;          quoi le filtre se transmettrait a lui-meme.
-0BF8A6                   	;
-0BF8A6                   	;    ⛔ DANS LE PILOTE (BASEXT-DRV), LA PLAGE 0BF000h-0BFFFFh NE DIT RIEN : le
-0BF8A6                   	;       bloc reside ailleurs dans S1:, et un « deja nous » par plage laisserait
-0BF8A6                   	;       le filtre se brancher sur lui-meme au second XCONSOLE (recursion sans
-0BF8A6                   	;       fin). Le pilote compare donc l'adresse en place a xf_entry, exactement.
-0BF8A6                   	;       Ces octets de plage ne sont pas des champs d'adresse : la mesure de
-0BF8A6                   	;       relocation (reloc.py) ne pouvait pas les voir. Releve a la lecture le
-0BF8A6                   	;       2026-09-16. Le module autonome garde son test, eprouve sur machine.
-0BF8A6                   	xf_on:
-0BF8A6 04 74 F8          	        call    xf_fcb
-0BF8A9 1C 20             	        jrc     xon_ret
-0BF8AB 90 84 04          	        mv      a,[x+004H]
-0BF8AE 60 0B             	        cmp     a,00BH
-0BF8B0 1A 07             	        jrnz    xon_set
-0BF8B2 90 84 03          	        mv      a,[x+003H]
-0BF8B5 60 F0             	        cmp     a,0F0H
-0BF8B7 1E 12             	        jrnc    xon_ret                 ; 0BF000h-0BFFFFh : deja nous
-0BF8B9                   	xon_set:
-0BF8B9 95 84 02          	        mv      y,[x+002H]              ; l'adresse en place : la ROM, ou un autre
-0BF8BC AD 77 F7 0B       	        mv      [!xf_pass+1],y
-0BF8C0 AD A8 F7 0B       	        mv      [!xf_call+1],y
-0BF8C4 0D 6A F7 0B       	        mv      y,xf_entry
-0BF8C8 B5 84 02          	        mv      [x+002H],y              ; une seule instruction : atomique
-0BF8CB                   	xon_ret:
-0BF8CB 06                	        ret
-0BF8CC                   	
-0BF8CC                   	; xf_off -- debranche le filtre : rend l'adresse gardee dans xf_pass. Apres un
-0BF8CC                   	;           rechargement du module, c'est celle de l'assemblage, 0F21E7h.
-0BF8CC                   	;           APPEL PROCHE.
-0BF8CC                   	xf_off:
-0BF8CC 04 74 F8          	        call    xf_fcb
-0BF8CF 1C 15             	        jrc     xof_ret
-0BF8D1 90 84 04          	        mv      a,[x+004H]
-0BF8D4 60 0B             	        cmp     a,00BH
-0BF8D6 1A 0E             	        jrnz    xof_ret
-0BF8D8 90 84 03          	        mv      a,[x+003H]
-0BF8DB 60 F0             	        cmp     a,0F0H
-0BF8DD 1C 07             	        jrc     xof_ret                 ; pas un filtre de la zone du module
-0BF8DF 8D 77 F7 0B       	        mv      y,[!xf_pass+1]
-0BF8E3 B5 84 02          	        mv      [x+002H],y
-0BF8E6                   	xof_ret:
-0BF8E6 06                	        ret
-0BF8E7                   	
-0BF8E7                   	
-0BF8E7                   	; ============================================================================
-0BF8E7                   	; LES QUATRE ENTREES
-0BF8E7                   	; ============================================================================
-0BF8E7                   	kw_table:
-0BF8E7 05 4C 50 45 45 4B 	        db      5,'LPEEK',tk_lp
-0BF8ED 07                	
-0BF8EE 05 57 50 45 45 4B 	        db      5,'WPEEK',tk_wp
-0BF8F4 0A                	
-0BF8F5 05 4C 50 4F 4B 45 	        db      5,'LPOKE',tk_lpo
-0BF8FB 0E                	
-0BF8FC 03 4D 4F 44 0F    	        db      3,'MOD',tk_mod
-0BF901 06 55 43 41 53 45 	        db      6,'UCASE$',tk_uc
-0BF907 24 C6             	
-0BF909 06 4C 43 41 53 45 	        db      6,'LCASE$',tk_lc
-0BF90F 24 C7             	
-0BF911 05 54 52 49 4D 24 	        db      5,'TRIM$',tk_tr
-0BF917 C3                	
-0BF918 06 4C 54 52 49 4D 	        db      6,'LTRIM$',tk_lt
-0BF91E 24 C4             	
-0BF920 06 52 54 52 49 4D 	        db      6,'RTRIM$',tk_rt
-0BF926 24 C5             	
-0BF928 05 52 45 50 54 24 	        db      5,'REPT$',tk_rp
-0BF92E C8                	
-0BF92F 06 53 52 45 50 54 	        db      6,'SREPT$',tk_sr
-0BF935 24 C9             	
-0BF937 05 49 4E 53 54 52 	        db      5,'INSTR',tk_in
-0BF93D C2                	
-0BF93E 08 58 43 4F 4E 53 	        db      8,'XCONSOLE',tk_xc
-0BF944 4F 4C 45 CA       	
-0BF948 04 58 43 4C 53 CF 	        db      4,'XCLS',tk_xcl
-0BF94E 00                	        db      0                       ; fin de table
-0BF94F                   	
-0BF94F                   	disp_table:
-0BF94F                   	; Trois entrees de 4 octets, puis le terminateur. Le quartet haut du 3e octet
-0BF94F                   	; d'adresse est un DRAPEAU : 040h = fonction, routine a l'adresse + 3 ; 080h =
-0BF94F                   	; instruction, routine a l'adresse telle quelle. LPOKE est du second genre, et
-0BF94F                   	; n'a donc pas de prefixe de trois octets.
-0BF94F 07                	        db      tk_lp
-0BF950 2F                	        db      lpeek_m3
-0BF951 F0                	        db      lpeek_m3/256
-0BF952 4B                	        db      lpeek_m3/65536+040H
-0BF953 0A                	        db      tk_wp
-0BF954 71                	        db      wpeek_m3
-0BF955 F0                	        db      wpeek_m3/256
-0BF956 4B                	        db      wpeek_m3/65536+040H
-0BF957 0E                	        db      tk_lpo
-0BF958 A7                	        db      lpoke
-0BF959 F0                	        db      lpoke/256
-0BF95A 8B                	        db      lpoke/65536+080H
-0BF95B 0F                	        db      tk_mod
-0BF95C 03                	        db      modu_m3
-0BF95D F1                	        db      modu_m3/256
-0BF95E 4B                	        db      modu_m3/65536+040H
-0BF95F C6 26 F2 4B       	        db      tk_uc, ucase_m3, ucase_m3/256, ucase_m3/65536+040H
-0BF963 C7 51 F2 4B       	        db      tk_lc, lcase_m3, lcase_m3/256, lcase_m3/65536+040H
-0BF967 C3 7C F2 4B       	        db      tk_tr, trim_m3,  trim_m3/256,  trim_m3/65536+040H
-0BF96B C4 83 F2 4B       	        db      tk_lt, ltrim_m3, ltrim_m3/256, ltrim_m3/65536+040H
-0BF96F C5 8A F2 4B       	        db      tk_rt, rtrim_m3, rtrim_m3/256, rtrim_m3/65536+040H
-0BF973 C8 15 F3 4B       	        db      tk_rp, rept_m3,  rept_m3/256,  rept_m3/65536+040H
-0BF977 C9 FA F3 4B       	        db      tk_sr, srept_m3, srept_m3/256, srept_m3/65536+040H
-0BF97B C2 08 F5 4B       	        db      tk_in, instr_m3, instr_m3/256, instr_m3/65536+040H
-0BF97F CA 2F F6 8B       	        db      tk_xc,  xconsole, xconsole/256, xconsole/65536+080H   ; instructions :
-0BF983 CF 0F F7 8B       	        db      tk_xcl, xcls,     xcls/256,     xcls/65536+080H       ; pas de +3
-0BF987 00                	        db      0                       ; fin de table
-0BF988                   	
-0BF988                   	; ============================================================================
-0BF988                   	; LES CROCHETS D'ORIGINE, pour desinstaller
-0BF988                   	; ============================================================================
-0BF988                   	; Le premier operande, hors d'atteinte du second chknum. Il n'est PLUS ecrase
-0BF988                   	; ensuite : apres un appel, LPEEK &BF1EC rend A tel que dec2bin l'a converti.
-0BF988                   	; C'est notre seul point de mesure, et le module doit rester assez court pour
-0BF988                   	; que le BASIC ne vienne pas le manger -- le vidage du 2026-09-05 montre du
-0BF988                   	; texte BASIC des 0BF1F7h.
-0BF988 00 00 00          	sv_a:     db    0,0,0
-0BF98B 00                	sv_bp0:   db    0             ; BP a l'entree -- l'etat a rendre en erreur
-0BF98C 00                	sv_bp1:   db    0             ; BP apres la 1re evaluation -- cadre du resultat
-0BF98D                   	
-0BF98D                   	; ⛔ LES TROIS TEMOINS DE MESURE ONT ETE RETIRES LE 2026-09-05, une fois MOD
-0BF98D                   	;    valide sur machine. Ils portaient A et B tels que dec2bin les rendait, et le
-0BF98D                   	;    reste au sortir de la boucle ; c'est par eux que la cause a ete trouvee deux
-0BF98D                   	;    fois, la ou le raisonnement s'etait trompe. Les remettre est l'affaire de
-0BF98D                   	;    trois « mvp [!dbg_x],(BP+n) » et de trois mots de 3 octets -- le faire
-0BF98D                   	;    plutot que de deviner, si la fonction se remet a mentir.
-0BF98D                   	
-0BF98D                   	
-0BF98D 00                	tmode:    db    0
-0BF98E 00                	rp_n:     db    0
-0BF98F 00                	rp_c:     db    0
-0BF990 00                	in_start: db    0
-0BF991 00                	in_lt:    db    0
-0BF992 00                	in_res:   db    0
-0BF993 00                	in_p:     db    0
-0BF994 00                	sr_n:     db    0
-0BF995 00                	sr_cnt:   db    0
-0BF996 00 00 00          	sr_src:   db    0,0,0
-0BF999 00                	xc_t:     db    0             ; XCONSOLE : debut lu
-0BF99A 00                	xc_c:     db    0             ; XCONSOLE : nombre lu, 0FFh = absent
-0BF99B 00                	xc_top:   db    0             ; la premiere ligne de la fenetre, relue par XCLS
-0BF99C 00                	xcl_y:    db    0             ; XCLS : la ligne en cours d'effacement
-0BF99D 00                	xf_w:     db    0             ; filtre : 1 si retour a la ligne differe
-0BF99E 00                	xf_y:     db    0             ; filtre : la ligne en cours de remontee
-0BF99F 00 00 00 00 00 00 	xf_buf:   ds    240           ; filtre : le motif d'une ligne (240 colonnes)
-0BF9A5 00 00 00 00 00 00 	
-0BF9AB 00 00 00 00 00 00 	
-0BF9B1 00 00 00 00 00 00 	
-0BF9B7 00 00 00 00 00 00 	
-0BF9BD 00 00 00 00 00 00 	
-0BF9C3 00 00 00 00 00 00 	
-0BF9C9 00 00 00 00 00 00 	
-0BF9CF 00 00 00 00 00 00 	
-0BF9D5 00 00 00 00 00 00 	
-0BF9DB 00 00 00 00 00 00 	
-0BF9E1 00 00 00 00 00 00 	
-0BF9E7 00 00 00 00 00 00 	
-0BF9ED 00 00 00 00 00 00 	
-0BF9F3 00 00 00 00 00 00 	
-0BF9F9 00 00 00 00 00 00 	
-0BF9FF 00 00 00 00 00 00 	
-0BFA05 00 00 00 00 00 00 	
-0BFA0B 00 00 00 00 00 00 	
-0BFA11 00 00 00 00 00 00 	
-0BFA17 00 00 00 00 00 00 	
-0BFA1D 00 00 00 00 00 00 	
-0BFA23 00 00 00 00 00 00 	
-0BFA29 00 00 00 00 00 00 	
-0BFA2F 00 00 00 00 00 00 	
-0BFA35 00 00 00 00 00 00 	
-0BFA3B 00 00 00 00 00 00 	
-0BFA41 00 00 00 00 00 00 	
-0BFA47 00 00 00 00 00 00 	
-0BFA4D 00 00 00 00 00 00 	
-0BFA53 00 00 00 00 00 00 	
-0BFA59 00 00 00 00 00 00 	
-0BFA5F 00 00 00 00 00 00 	
-0BFA65 00 00 00 00 00 00 	
-0BFA6B 00 00 00 00 00 00 	
-0BFA71 00 00 00 00 00 00 	
-0BFA77 00 00 00 00 00 00 	
-0BFA7D 00 00 00 00 00 00 	
-0BFA83 00 00 00 00 00 00 	
-0BFA89 00 00 00 00 00 00 	
-0BFA8F 00 00 00          	old_kw:   db    0,0,0
-0BFA92 00 00 00          	old_disp: db    0,0,0
-0BFA95                   	
-0BFA95                   	        end
+0BF76A                   	; ⚠️ LE FILTRE DE XCONSOLE NE LA VOIT PAS : il est branche sur le handle 0 du
+0BF76A                   	;    FCS, et 058h passe par l'IOCS. Une barre tracee dans une fenetre XCONSOLE
+0BF76A                   	;    en sort.
+0BF76A                   	;
+0BF76A                   	; Les trois nombres se lisent par xc_num (eval + dec2bin, 0 a 255, BP rendu en
+0BF76A                   	; ABSOLU) ; la chaine par eval, comme INSTR : elle vit SUR U, c'est de la qu'on
+0BF76A                   	; la lit (« mv x,u »), et on la libere ensuite (« add u,(BP+4) »).
+0BF76A                   	dwgl:
+0BF76A 30 D8 85 FA 0B EC 	        mv      [!sv_bp0],(bp_ram)      ; une INSTRUCTION rend BP inchange
+0BF770 04 DB F6          	        call    xc_num                  ; (1) la colonne
+0BF773 1C D0             	        jrc     dw_err
+0BF775 A8 89 FB 0B       	        mv      [!dw_col],a
+0BF779 04 4D F8          	        call    dw_virg
+0BF77C 1C C5             	        jrc     dw_syn
+0BF77E 04 DB F6          	        call    xc_num                  ; (2) la ligne
+0BF781 1C C2             	        jrc     dw_err
+0BF783 A8 8A FB 0B       	        mv      [!dw_lig],a
+0BF787 04 4D F8          	        call    dw_virg
+0BF78A 1C B7             	        jrc     dw_syn
+0BF78C 04 DB F6          	        call    xc_num                  ; (3) le tag = le registre B
+0BF78F 1C B4             	        jrc     dw_err
+0BF791 A8 8B FB 0B       	        mv      [!dw_tag],a
+0BF795 04 4D F8          	        call    dw_virg
+0BF798 1C A9             	        jrc     dw_syn
+0BF79A                   	
+0BF79A                   	; --- (4) la chaine des libelles --------------------------------------------
+0BF79A 05 6E F2 0E       	        callf   eval
+0BF79E 1C A5             	        jrc     dw_err                  ; A porte deja le code d'erreur
+0BF7A0 65 00 80          	        test    (BP+0),080H
+0BF7A3 18 96             	        jrz     dw_type                 ; ce n'est pas une chaine
+0BF7A5 80 04             	        mv      a,(BP+4)                ; sa longueur
+0BF7A7 60 00             	        cmp     a,000H
+0BF7A9 18 90             	        jrz     dw_type                 ; chaine vide : aucun libelle
+0BF7AB 60 30             	        cmp     a,dw_lmax+1
+0BF7AD 1E 84             	        jrnc    dw_long                 ; plus longue que le tampon
+0BF7AF                   	
+0BF7AF                   	; --- le tampon : chaque ',' devient le 0FFh de fin de libelle --------------
+0BF7AF                   	; ⛔ X EST LE POINT DE REPRISE DU BASIC, et « mv x,u » l'ecrase. INSTR le sauve
+0BF7AF                   	;    par pushs/pops autour de sa comparaison (in_cmp) : on fait de meme. La
+0BF7AF                   	;    premiere version ne le faisait pas -- l'interpreteur reprenait alors sur la
+0BF7AF                   	;    pile U, et l'essai en emulation (essais/DWGLEMU.py) l'a montre a la
+0BF7AF                   	;    premiere execution.
+0BF7AF FD 10             	        mv      il,a                    ; le compteur de caracteres
+0BF7B1 B4 37             	        pushs   x                       ; le point de reprise du BASIC
+0BF7B3 FD 46             	        mv      x,u                     ; la chaine est SUR U (comme INSTR)
+0BF7B5 0D 8D FB 0B       	        mv      y,dw_buf
+0BF7B9 08 01             	        mv      a,001H
+0BF7BB A8 8C FB 0B       	        mv      [!dw_n],a               ; une case, plus une par virgule
+0BF7BF                   	dw_cp:
+0BF7BF 90 24             	        mv      a,[x++]
+0BF7C1 60 2C             	        cmp     a,02CH                  ; ','
+0BF7C3 1A 0C             	        jrnz    dw_put
+0BF7C5 88 8C FB 0B       	        mv      a,[!dw_n]
+0BF7C9 6C 00             	        inc     a
+0BF7CB A8 8C FB 0B       	        mv      [!dw_n],a
+0BF7CF 08 FF             	        mv      a,0FFH
+0BF7D1                   	dw_put:
+0BF7D1 B0 25             	        mv      [y++],a
+0BF7D3 7C 01             	        dec     il
+0BF7D5 1B 18             	        jrnz    dw_cp
+0BF7D7 08 FF             	        mv      a,0FFH
+0BF7D9 B0 05             	        mv      [y],a                   ; le 0FFh du dernier libelle
+0BF7DB 94 27             	        pops    x                       ; rendre le point de reprise
+0BF7DD                   	
+0BF7DD                   	; --- rendre la chaine a U, puis le cadre d'eval ----------------------------
+0BF7DD 80 04             	        mv      a,(BP+4)
+0BF7DF 45 60             	        add     u,a                     ; comme BAS_LEN (0EECB2h) et INSTR
+0BF7E1 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]
+0BF7E7                   	
+0BF7E7                   	; --- les refus que la ROM ne prononce pas ----------------------------------
+0BF7E7 88 8C FB 0B       	        mv      a,[!dw_n]
+0BF7EB 60 06             	        cmp     a,006H
+0BF7ED 1E 50             	        jrnc    dw_range                ; plus de cinq cases
+0BF7EF FD 10             	        mv      il,a
+0BF7F1 88 8A FB 0B       	        mv      a,[!dw_lig]
+0BF7F5 60 04             	        cmp     a,004H
+0BF7F7 1E 46             	        jrnc    dw_range                ; 0F23C3h refuse une ligne >= 4
+0BF7F9 88 89 FB 0B       	        mv      a,[!dw_col]
+0BF7FD                   	dw_lg:
+0BF7FD 40 08             	        add     a,008H                  ; huit colonnes par case
+0BF7FF 7C 01             	        dec     il
+0BF801 1B 06             	        jrnz    dw_lg
+0BF803 60 29             	        cmp     a,029H
+0BF805 1E 38             	        jrnc    dw_range                ; colonne + 8 x cases > 40
+0BF807                   	
+0BF807                   	; --- l'appel, aux octets de la ROM (0F1D29h) -------------------------------
+0BF807 2C                	        pushu   x                       ; X = le point de reprise du BASIC
+0BF808 2B                	        pushu   i
+0BF809 88 89 FB 0B       	        mv      a,[!dw_col]
+0BF80D 30 A0 D4          	        mv      (bl),a
+0BF810 88 8A FB 0B       	        mv      a,[!dw_lig]
+0BF814 30 A0 D5          	        mv      (bh),a
+0BF817 88 8B FB 0B       	        mv      a,[!dw_tag]
+0BF81B 75                	        mv      b,a                     ; B = le tag (bits 0 et 7)
+0BF81C 88 8C FB 0B       	        mv      a,[!dw_n]               ; A = le nombre de cases
+0BF820 0C 8D FB 0B       	        mv      x,dw_buf                ; X = les libelles, 0FFh entre chacun
+0BF824 30 CD D6 00 00    	        mvw     (cl),00000H             ; device 0, lecteur 0 : l'ecran
+0BF829 09 58             	        mv      il,d0_guide_line
+0BF82B 05 E8 FF 0F       	        callf   iocs_call
+0BF82F 3B                	        popu    i
+0BF830 3C                	        popu    x
+0BF831 9F                	        rc                              ; ⛔ 058h ne fixe PAS la retenue
+0BF832 07                	        retf
+0BF833                   	
+0BF833                   	; Refus APRES la lecture de la chaine : elle est sur U, et rendre l'etat
+0BF833                   	; d'avant l'appel (MODE-EMPLOI §6.6) demande de la rendre aussi. Les deux
+0BF833                   	; autres refus de chaine n'ont rien a rendre : une chaine vide n'occupe rien,
+0BF833                   	; et un argument qui n'est pas une chaine n'a rien empile.
+0BF833                   	dw_long:
+0BF833 80 04             	        mv      a,(BP+4)
+0BF835 45 60             	        add     u,a
+0BF837 08 21             	        mv      a,err_range
+0BF839 12 0A             	        jr      dw_err
+0BF83B                   	dw_type:
+0BF83B 08 5A             	        mv      a,err_type
+0BF83D 12 06             	        jr      dw_err
+0BF83F                   	dw_range:
+0BF83F 08 21             	        mv      a,err_range
+0BF841 12 02             	        jr      dw_err
+0BF843                   	dw_syn:
+0BF843 08 0A             	        mv      a,err_syn
+0BF845                   	dw_err:
+0BF845 30 D0 EC 85 FA 0B 	        mv      (bp_ram),[!sv_bp0]      ; l'etat d'avant l'appel (MODE-EMPLOI §6.6)
+0BF84B 97                	        sc
+0BF84C 07                	        retf
+0BF84D                   	
+0BF84D                   	; dw_virg -- exige une virgule, espaces sautes ; CY=1 si elle manque.
+0BF84D                   	;            APPEL PROCHE.
+0BF84D                   	dw_virg:
+0BF84D 04 D0 F6          	        call    xc_skip
+0BF850 60 2C             	        cmp     a,02CH
+0BF852 1A 04             	        jrnz    dw_vnon
+0BF854 6C 04             	        inc     x
+0BF856 9F                	        rc
+0BF857 06                	        ret
+0BF858                   	dw_vnon:
+0BF858 97                	        sc
+0BF859 06                	        ret
+0BF85A                   	
+0BF85A                   	; ============================================================================
+0BF85A                   	; LE FILTRE D'ECRITURE DE STDO:  --  confine le defilement a la fenetre
+0BF85A                   	; ============================================================================
+0BF85A                   	; ⛔ LE FILTRE NE SE CHAINE PAS DANS d_link, ET C'EST LA MACHINE QUI LE DIT.
+0BF85A                   	;    L'ecriture par le FCS ne passe PAS par iocs_call : en 0E0907h, il saute
+0BF85A                   	;    (retf) a l'adresse rangee en [bloc+2] du bloc de controle du handle, et
+0BF85A                   	;    cette adresse est memorisee a l'OUVERTURE (0E07F1h). Releve dans la System
+0BF85A                   	;    Data Area d'un PC-E500S reel (Samples/Extraction/s1-1.bin) :
+0BF85A                   	;
+0BF85A                   	;      bloc du handle 0 en 0BEE48h : 00 00 E7 21 0F A2 02
+0BF85A                   	;                                    |  |  \______/ \
+0BF85A                   	;                                device lecteur  0F21E7h = drv_display, attribut
+0BF85A                   	;
+0BF85A                   	;    Un en-tete ajoute en tete de d_link (la methode de MEMCHECK) ne verrait donc
+0BF85A                   	;    jamais un PRINT. On remplace l'adresse du bloc du handle 0 par xf_entry, et
+0BF85A                   	;    le filtre transmet a l'ancienne adresse -- recopiee dans les operandes de
+0BF85A                   	;    xf_pass et xf_call (auto-modification, comme MEMCHECK). Si la ROM rouvre
+0BF85A                   	;    STDO:, le filtre disparait simplement : l'echec est sans danger.
+0BF85A                   	;
+0BF85A                   	; LE BLOC DE CONTROLE se trouve comme en 0E0698h / 0E066Ah :
+0BF85A                   	;    numero = [fhandle + handle] ; bloc = [(iocsw)] + [(iocsw)+25h]
+0BF85A                   	;    + numero * 1Fh, borne par [(iocsw)+27h] ; octet 0 = device (0FFh = libre).
+0BF85A                   	;
+0BF85A                   	; LE PRINCIPE : DEFILER AVANT LA ROM. Pour un octet, le pilote fait (0F2A47h) :
+0BF85A                   	;    affichable        : retour a la ligne differe (0F2B57h : X >= largeur ->
+0BF85A                   	;                        X=0, Y+1), puis 0F2B6Ah (Y >= lcd_height -> defilement
+0BF85A                   	;                        de la ROM, Y = lcd_height-1), puis l'affichage ;
+0BF85A                   	;    0Dh               : 0F2B6Ah seul ;
+0BF85A                   	;    08 09 0A 0B 1C 1D 1F : 0F2B57h puis 0F2B6Ah ;
+0BF85A                   	;    07 0C 1E et le reste : pas de 0F2B6Ah.
+0BF85A                   	; Le filtre calcule la ligne que verra 0F2B6Ah. Si la ROM allait defiler, il
+0BF85A                   	; defile LUI-MEME les lignes debut .. lcd_height-1 (55h pattern_read, 56h
+0BF85A                   	; pattern_write, 49h clear_line), puis remonte Y pour que la ROM ne defile plus.
+0BF85A                   	; L'octet est ensuite transmis tel quel : le pilote fait tout le reste.
+0BF85A                   	;
+0BF85A                   	; ⚠️ SEULS LES ECRITURES DU HANDLE 0 SONT VUES. Un OPEN "SCRN:" ouvre un autre
+0BF85A                   	;    handle, qui garde l'adresse de la ROM.
+0BF85A                   	; ⚠️ NE PAS RECHARGER LE MODULE FILTRE BRANCHE. Entre LOAD M et CALL &BF000, le
+0BF85A                   	;    handle 0 designerait du code ecrase. Faire XCONSOLE avant de recharger ;
+0BF85A                   	;    CALL &BF000 debranche ensuite tout filtre reste dans la zone du module.
+0BF85A                   	
+0BF85A                   	; xf_entry -- l'entree du filtre : memes registres qu'une entree de pilote.
+0BF85A                   	xf_entry:
+0BF85A 2A                	        pushu   ba
+0BF85B FD 23             	        mv      ba,i
+0BF85D 60 0D             	        cmp     a,00DH                  ; write_byte
+0BF85F 18 09             	        jrz     xf_wbyte
+0BF861 60 0B             	        cmp     a,00BH                  ; write_block
+0BF863 18 13             	        jrz     xf_wblock
+0BF865 3A                	        popu    ba
+0BF866                   	xf_pass:
+0BF866 03 E7 21 0F       	        jpf     0F21E7H                 ; OPERANDE REECRIT par xf_on
+0BF86A                   	xf_wbyte:
+0BF86A 3A                	        popu    ba                      ; A = l'octet, I = 0Dh
+0BF86B 2C                	        pushu   x
+0BF86C 2D                	        pushu   y
+0BF86D 2B                	        pushu   i
+0BF86E 2A                	        pushu   ba
+0BF86F 04 9C F8          	        call    xf_pre
+0BF872 3A                	        popu    ba
+0BF873 3B                	        popu    i
+0BF874 3D                	        popu    y
+0BF875 3C                	        popu    x
+0BF876 13 12             	        jr      xf_pass
+0BF878                   	
+0BF878                   	; write_block : X = source, Y = compte. On le rend octet par octet au pilote,
+0BF878                   	; chacun precede de son controle ; Y est rendu tel quel, comme 0F2A18h.
+0BF878                   	xf_wblock:
+0BF878 3A                	        popu    ba
+0BF879 2D                	        pushu   y
+0BF87A                   	xb_lp:
+0BF87A 6C 05             	        inc     y
+0BF87C 7C 05             	        dec     y
+0BF87E 18 14             	        jrz     xb_end
+0BF880 90 24             	        mv      a,[x++]
+0BF882 2C                	        pushu   x
+0BF883 2D                	        pushu   y
+0BF884 28                	        pushu   a
+0BF885 04 9C F8          	        call    xf_pre
+0BF888 38                	        popu    a
+0BF889 09 0D             	        mv      il,00DH
+0BF88B 04 97 F8          	        call    xf_call                 ; write_byte de l'ancien pilote
+0BF88E 3D                	        popu    y
+0BF88F 3C                	        popu    x
+0BF890 7C 05             	        dec     y
+0BF892 13 1A             	        jr      xb_lp
+0BF894                   	xb_end:
+0BF894 3D                	        popu    y
+0BF895 9F                	        rc
+0BF896 07                	        retf
+0BF897                   	
+0BF897                   	; xf_call -- appelle l'ancien pilote, commande dans IL.  APPEL PROCHE.
+0BF897                   	xf_call:
+0BF897 05 E7 21 0F       	        callf   0F21E7H                 ; OPERANDE REECRIT par xf_on
+0BF89B 06                	        ret
+0BF89C                   	
+0BF89C                   	; xf_pre -- A = l'octet a ecrire. Defile la fenetre si la ROM allait le faire.
+0BF89C                   	;           Detruit A, I, X, Y, (bl), (bh).  APPEL PROCHE.
+0BF89C                   	xf_pre:
+0BF89C 30 A0 D4          	        mv      (bl),a                  ; l'octet, le temps de le classer
+0BF89F 88 95 FA 0B       	        mv      a,[!xc_top]
+0BF8A3 60 00             	        cmp     a,000H
+0BF8A5 18 6E             	        jrz     xp_none                 ; debut 0 : la ROM suffit
+0BF8A7 30 A0 D5          	        mv      (bh),a
+0BF8AA 88 9E FC 0B       	        mv      a,[lcd_height]
+0BF8AE 30 63 D5          	        cmp     (bh),a                  ; debut - hauteur : NC = pas de fenetre
+0BF8B1 1E 62             	        jrnc    xp_none
+0BF8B3 30 80 D4          	        mv      a,(bl)
+0BF8B6 60 20             	        cmp     a,020H
+0BF8B8 1E 1B             	        jrnc    xp_wrap                 ; affichable
+0BF8BA 66 29 FC 0B 40    	        test    [ctrl_disp],040H
+0BF8BF 1A 14             	        jrnz    xp_wrap                 ; code de controle affiche (0F2A56h)
+0BF8C1 60 0D             	        cmp     a,00DH
+0BF8C3 18 25             	        jrz     xp_nw                   ; CR : 0F2B6Ah sans 0F2B57h
+0BF8C5 60 08             	        cmp     a,008H
+0BF8C7 1C 4C             	        jrc     xp_none                 ; 00-07
+0BF8C9 60 0C             	        cmp     a,00CH
+0BF8CB 1C 08             	        jrc     xp_wrap                 ; 08 09 0A 0B
+0BF8CD 60 1C             	        cmp     a,01CH
+0BF8CF 1C 44             	        jrc     xp_none                 ; 0C-1B
+0BF8D1 60 1E             	        cmp     a,01EH
+0BF8D3 18 40             	        jrz     xp_none                 ; 1E, curseur vers le haut
+0BF8D5                   	xp_wrap:                                ; 1C 1D 1F et les affichables
+0BF8D5 09 00             	        mv      il,000H
+0BF8D7 30 D0 D4 27 FC 0B 	        mv      (bl),[scrn_crsr_x]
+0BF8DD 88 9D FC 0B       	        mv      a,[lcd_width]
+0BF8E1 30 63 D4          	        cmp     (bl),a                  ; X - largeur : NC = retour differe
+0BF8E4 1C 06             	        jrc     xp_chk
+0BF8E6 09 01             	        mv      il,001H
+0BF8E8 12 02             	        jr      xp_chk
+0BF8EA                   	xp_nw:
+0BF8EA 09 00             	        mv      il,000H
+0BF8EC                   	xp_chk:
+0BF8EC 88 28 FC 0B       	        mv      a,[scrn_crsr_y]
+0BF8F0 46 01             	        add     a,il                    ; la ligne que verra 0F2B6Ah
+0BF8F2 30 A0 D5          	        mv      (bh),a
+0BF8F5 88 9E FC 0B       	        mv      a,[lcd_height]
+0BF8F9 30 63 D5          	        cmp     (bh),a                  ; NC : la ROM defilerait
+0BF8FC 1C 17             	        jrc     xp_none
+0BF8FE A9 97 FA 0B       	        mv      [!xf_w],il
+0BF902 04 16 F9          	        call    xf_scroll
+0BF905 88 9E FC 0B       	        mv      a,[lcd_height]
+0BF909 7C 00             	        dec     a
+0BF90B 89 97 FA 0B       	        mv      il,[!xf_w]
+0BF90F 4E 01             	        sub     a,il                    ; lcd_height-1-retour : plus de defilement ROM
+0BF911 A8 28 FC 0B       	        mv      [scrn_crsr_y],a
+0BF915                   	xp_none:
+0BF915 06                	        ret
+0BF916                   	
+0BF916                   	; xf_scroll -- remonte d'une ligne les lignes debut+1 .. lcd_height-1, puis
+0BF916                   	;              efface la derniere.  APPEL PROCHE.
+0BF916                   	xf_scroll:
+0BF916 88 95 FA 0B       	        mv      a,[!xc_top]
+0BF91A A8 98 FA 0B       	        mv      [!xf_y],a
+0BF91E                   	xs_lp:
+0BF91E 88 98 FA 0B       	        mv      a,[!xf_y]
+0BF922 6C 00             	        inc     a
+0BF924 30 A0 D5          	        mv      (bh),a                  ; la ligne du dessous
+0BF927 88 9E FC 0B       	        mv      a,[lcd_height]
+0BF92B 30 63 D5          	        cmp     (bh),a
+0BF92E 1E 25             	        jrnc    xs_clr                  ; plus rien a remonter
+0BF930 0C 99 FA 0B       	        mv      x,xf_buf
+0BF934 09 55             	        mv      il,d0_pattern_read
+0BF936 04 97 F8          	        call    xf_call
+0BF939 88 98 FA 0B       	        mv      a,[!xf_y]
+0BF93D 30 A0 D5          	        mv      (bh),a
+0BF940 0C 99 FA 0B       	        mv      x,xf_buf
+0BF944 09 56             	        mv      il,d0_pattern_write
+0BF946 04 97 F8          	        call    xf_call
+0BF949 88 98 FA 0B       	        mv      a,[!xf_y]
+0BF94D 6C 00             	        inc     a
+0BF94F A8 98 FA 0B       	        mv      [!xf_y],a
+0BF953 13 37             	        jr      xs_lp
+0BF955                   	xs_clr:
+0BF955 88 9E FC 0B       	        mv      a,[lcd_height]
+0BF959 7C 00             	        dec     a
+0BF95B 30 A0 D5          	        mv      (bh),a
+0BF95E 09 49             	        mv      il,d0_clear_line
+0BF960 04 97 F8          	        call    xf_call
+0BF963 06                	        ret
+0BF964                   	
+0BF964                   	; xf_fcb -- X = le bloc de controle du handle 0 ; CY=1 s'il n'est pas l'ecran.
+0BF964                   	;           Detruit A, I, (bl).  APPEL PROCHE.
+0BF964                   	xf_fcb:
+0BF964 88 6D FC 0B       	        mv      a,[fhandle]             ; handle 0 -> numero de bloc
+0BF968 30 A0 D4          	        mv      (bl),a
+0BF96B 30 84 E6          	        mv      x,(iocsw)
+0BF96E 90 84 27          	        mv      a,[x+027H]              ; nombre de blocs
+0BF971 30 63 D4          	        cmp     (bl),a
+0BF974 1E 1E             	        jrnc    xfc_no
+0BF976 93 84 25          	        mv      i,[x+025H]
+0BF979 45 43             	        add     x,i                     ; le premier bloc
+0BF97B 0B 1F 00          	        mv      i,0001FH                ; 31 octets par bloc
+0BF97E                   	xfc_lp:
+0BF97E 30 80 D4          	        mv      a,(bl)
+0BF981 60 00             	        cmp     a,000H
+0BF983 18 07             	        jrz     xfc_at
+0BF985 45 43             	        add     x,i
+0BF987 30 7D D4          	        dec     (bl)
+0BF98A 13 0E             	        jr      xfc_lp
+0BF98C                   	xfc_at:
+0BF98C 90 04             	        mv      a,[x]                   ; le device du bloc
+0BF98E 60 00             	        cmp     a,000H
+0BF990 1A 02             	        jrnz    xfc_no                  ; libre (0FFh) ou pas l'ecran
+0BF992 9F                	        rc
+0BF993 06                	        ret
+0BF994                   	xfc_no:
+0BF994 97                	        sc
+0BF995 06                	        ret
+0BF996                   	
+0BF996                   	; xf_on -- branche le filtre sur le handle 0.  APPEL PROCHE.
+0BF996                   	;          Deja branche (adresse dans la zone du module) : ne rien faire, sans
+0BF996                   	;          quoi le filtre se transmettrait a lui-meme.
+0BF996                   	;
+0BF996                   	;    ⛔ DANS LE PILOTE (BASEXT-DRV), LA PLAGE 0BF000h-0BFFFFh NE DIT RIEN : le
+0BF996                   	;       bloc reside ailleurs dans S1:, et un « deja nous » par plage laisserait
+0BF996                   	;       le filtre se brancher sur lui-meme au second XCONSOLE (recursion sans
+0BF996                   	;       fin). Le pilote compare donc l'adresse en place a xf_entry, exactement.
+0BF996                   	;       Ces octets de plage ne sont pas des champs d'adresse : la mesure de
+0BF996                   	;       relocation (reloc.py) ne pouvait pas les voir. Releve a la lecture le
+0BF996                   	;       2026-09-16. Le module autonome garde son test, eprouve sur machine.
+0BF996                   	xf_on:
+0BF996 04 64 F9          	        call    xf_fcb
+0BF999 1C 20             	        jrc     xon_ret
+0BF99B 90 84 04          	        mv      a,[x+004H]
+0BF99E 60 0B             	        cmp     a,00BH
+0BF9A0 1A 07             	        jrnz    xon_set
+0BF9A2 90 84 03          	        mv      a,[x+003H]
+0BF9A5 60 F0             	        cmp     a,0F0H
+0BF9A7 1E 12             	        jrnc    xon_ret                 ; 0BF000h-0BFFFFh : deja nous
+0BF9A9                   	xon_set:
+0BF9A9 95 84 02          	        mv      y,[x+002H]              ; l'adresse en place : la ROM, ou un autre
+0BF9AC AD 67 F8 0B       	        mv      [!xf_pass+1],y
+0BF9B0 AD 98 F8 0B       	        mv      [!xf_call+1],y
+0BF9B4 0D 5A F8 0B       	        mv      y,xf_entry
+0BF9B8 B5 84 02          	        mv      [x+002H],y              ; une seule instruction : atomique
+0BF9BB                   	xon_ret:
+0BF9BB 06                	        ret
+0BF9BC                   	
+0BF9BC                   	; xf_off -- debranche le filtre : rend l'adresse gardee dans xf_pass. Apres un
+0BF9BC                   	;           rechargement du module, c'est celle de l'assemblage, 0F21E7h.
+0BF9BC                   	;           APPEL PROCHE.
+0BF9BC                   	xf_off:
+0BF9BC 04 64 F9          	        call    xf_fcb
+0BF9BF 1C 15             	        jrc     xof_ret
+0BF9C1 90 84 04          	        mv      a,[x+004H]
+0BF9C4 60 0B             	        cmp     a,00BH
+0BF9C6 1A 0E             	        jrnz    xof_ret
+0BF9C8 90 84 03          	        mv      a,[x+003H]
+0BF9CB 60 F0             	        cmp     a,0F0H
+0BF9CD 1C 07             	        jrc     xof_ret                 ; pas un filtre de la zone du module
+0BF9CF 8D 67 F8 0B       	        mv      y,[!xf_pass+1]
+0BF9D3 B5 84 02          	        mv      [x+002H],y
+0BF9D6                   	xof_ret:
+0BF9D6 06                	        ret
+0BF9D7                   	
+0BF9D7                   	
+0BF9D7                   	; ============================================================================
+0BF9D7                   	; LES QUATRE ENTREES
+0BF9D7                   	; ============================================================================
+0BF9D7                   	kw_table:
+0BF9D7 05 4C 50 45 45 4B 	        db      5,'LPEEK',tk_lp
+0BF9DD 07                	
+0BF9DE 05 57 50 45 45 4B 	        db      5,'WPEEK',tk_wp
+0BF9E4 0A                	
+0BF9E5 05 4C 50 4F 4B 45 	        db      5,'LPOKE',tk_lpo
+0BF9EB 0E                	
+0BF9EC 03 4D 4F 44 0F    	        db      3,'MOD',tk_mod
+0BF9F1 06 55 43 41 53 45 	        db      6,'UCASE$',tk_uc
+0BF9F7 24 C6             	
+0BF9F9 06 4C 43 41 53 45 	        db      6,'LCASE$',tk_lc
+0BF9FF 24 C7             	
+0BFA01 05 54 52 49 4D 24 	        db      5,'TRIM$',tk_tr
+0BFA07 C3                	
+0BFA08 06 4C 54 52 49 4D 	        db      6,'LTRIM$',tk_lt
+0BFA0E 24 C4             	
+0BFA10 06 52 54 52 49 4D 	        db      6,'RTRIM$',tk_rt
+0BFA16 24 C5             	
+0BFA18 05 52 45 50 54 24 	        db      5,'REPT$',tk_rp
+0BFA1E C8                	
+0BFA1F 06 53 52 45 50 54 	        db      6,'SREPT$',tk_sr
+0BFA25 24 C9             	
+0BFA27 05 49 4E 53 54 52 	        db      5,'INSTR',tk_in
+0BFA2D C2                	
+0BFA2E 08 58 43 4F 4E 53 	        db      8,'XCONSOLE',tk_xc
+0BFA34 4F 4C 45 CA       	
+0BFA38 04 58 43 4C 53 CF 	        db      4,'XCLS',tk_xcl
+0BFA3E 04 44 57 47 4C D3 	        db      4,'DWGL',tk_dw
+0BFA44 00                	        db      0                       ; fin de table
+0BFA45                   	
+0BFA45                   	disp_table:
+0BFA45                   	; Trois entrees de 4 octets, puis le terminateur. Le quartet haut du 3e octet
+0BFA45                   	; d'adresse est un DRAPEAU : 040h = fonction, routine a l'adresse + 3 ; 080h =
+0BFA45                   	; instruction, routine a l'adresse telle quelle. LPOKE est du second genre, et
+0BFA45                   	; n'a donc pas de prefixe de trois octets.
+0BFA45 07                	        db      tk_lp
+0BFA46 2F                	        db      lpeek_m3
+0BFA47 F0                	        db      lpeek_m3/256
+0BFA48 4B                	        db      lpeek_m3/65536+040H
+0BFA49 0A                	        db      tk_wp
+0BFA4A 71                	        db      wpeek_m3
+0BFA4B F0                	        db      wpeek_m3/256
+0BFA4C 4B                	        db      wpeek_m3/65536+040H
+0BFA4D 0E                	        db      tk_lpo
+0BFA4E A7                	        db      lpoke
+0BFA4F F0                	        db      lpoke/256
+0BFA50 8B                	        db      lpoke/65536+080H
+0BFA51 0F                	        db      tk_mod
+0BFA52 03                	        db      modu_m3
+0BFA53 F1                	        db      modu_m3/256
+0BFA54 4B                	        db      modu_m3/65536+040H
+0BFA55 C6 26 F2 4B       	        db      tk_uc, ucase_m3, ucase_m3/256, ucase_m3/65536+040H
+0BFA59 C7 51 F2 4B       	        db      tk_lc, lcase_m3, lcase_m3/256, lcase_m3/65536+040H
+0BFA5D C3 7C F2 4B       	        db      tk_tr, trim_m3,  trim_m3/256,  trim_m3/65536+040H
+0BFA61 C4 83 F2 4B       	        db      tk_lt, ltrim_m3, ltrim_m3/256, ltrim_m3/65536+040H
+0BFA65 C5 8A F2 4B       	        db      tk_rt, rtrim_m3, rtrim_m3/256, rtrim_m3/65536+040H
+0BFA69 C8 15 F3 4B       	        db      tk_rp, rept_m3,  rept_m3/256,  rept_m3/65536+040H
+0BFA6D C9 FA F3 4B       	        db      tk_sr, srept_m3, srept_m3/256, srept_m3/65536+040H
+0BFA71 C2 08 F5 4B       	        db      tk_in, instr_m3, instr_m3/256, instr_m3/65536+040H
+0BFA75 CA 2F F6 8B       	        db      tk_xc,  xconsole, xconsole/256, xconsole/65536+080H   ; instructions :
+0BFA79 CF 0F F7 8B       	        db      tk_xcl, xcls,     xcls/256,     xcls/65536+080H       ; pas de +3
+0BFA7D D3 6A F7 8B       	        db      tk_dw,  dwgl,     dwgl/256,     dwgl/65536+080H
+0BFA81 00                	        db      0                       ; fin de table
+0BFA82                   	
+0BFA82                   	; ============================================================================
+0BFA82                   	; LES CROCHETS D'ORIGINE, pour desinstaller
+0BFA82                   	; ============================================================================
+0BFA82                   	; Le premier operande, hors d'atteinte du second chknum. Il n'est PLUS ecrase
+0BFA82                   	; ensuite : apres un appel, LPEEK &BF1EC rend A tel que dec2bin l'a converti.
+0BFA82                   	; C'est notre seul point de mesure, et le module doit rester assez court pour
+0BFA82                   	; que le BASIC ne vienne pas le manger -- le vidage du 2026-09-05 montre du
+0BFA82                   	; texte BASIC des 0BF1F7h.
+0BFA82 00 00 00          	sv_a:     db    0,0,0
+0BFA85 00                	sv_bp0:   db    0             ; BP a l'entree -- l'etat a rendre en erreur
+0BFA86 00                	sv_bp1:   db    0             ; BP apres la 1re evaluation -- cadre du resultat
+0BFA87                   	
+0BFA87                   	; ⛔ LES TROIS TEMOINS DE MESURE ONT ETE RETIRES LE 2026-09-05, une fois MOD
+0BFA87                   	;    valide sur machine. Ils portaient A et B tels que dec2bin les rendait, et le
+0BFA87                   	;    reste au sortir de la boucle ; c'est par eux que la cause a ete trouvee deux
+0BFA87                   	;    fois, la ou le raisonnement s'etait trompe. Les remettre est l'affaire de
+0BFA87                   	;    trois « mvp [!dbg_x],(BP+n) » et de trois mots de 3 octets -- le faire
+0BFA87                   	;    plutot que de deviner, si la fonction se remet a mentir.
+0BFA87                   	
+0BFA87                   	
+0BFA87 00                	tmode:    db    0
+0BFA88 00                	rp_n:     db    0
+0BFA89 00                	rp_c:     db    0
+0BFA8A 00                	in_start: db    0
+0BFA8B 00                	in_lt:    db    0
+0BFA8C 00                	in_res:   db    0
+0BFA8D 00                	in_p:     db    0
+0BFA8E 00                	sr_n:     db    0
+0BFA8F 00                	sr_cnt:   db    0
+0BFA90 00 00 00          	sr_src:   db    0,0,0
+0BFA93 00                	xc_t:     db    0             ; XCONSOLE : debut lu
+0BFA94 00                	xc_c:     db    0             ; XCONSOLE : nombre lu, 0FFh = absent
+0BFA95 00                	xc_top:   db    0             ; la premiere ligne de la fenetre, relue par XCLS
+0BFA96 00                	xcl_y:    db    0             ; XCLS : la ligne en cours d'effacement
+0BFA97 00                	xf_w:     db    0             ; filtre : 1 si retour a la ligne differe
+0BFA98 00                	xf_y:     db    0             ; filtre : la ligne en cours de remontee
+0BFA99 00 00 00 00 00 00 	xf_buf:   ds    240           ; filtre : le motif d'une ligne (240 colonnes)
+0BFA9F 00 00 00 00 00 00 	
+0BFAA5 00 00 00 00 00 00 	
+0BFAAB 00 00 00 00 00 00 	
+0BFAB1 00 00 00 00 00 00 	
+0BFAB7 00 00 00 00 00 00 	
+0BFABD 00 00 00 00 00 00 	
+0BFAC3 00 00 00 00 00 00 	
+0BFAC9 00 00 00 00 00 00 	
+0BFACF 00 00 00 00 00 00 	
+0BFAD5 00 00 00 00 00 00 	
+0BFADB 00 00 00 00 00 00 	
+0BFAE1 00 00 00 00 00 00 	
+0BFAE7 00 00 00 00 00 00 	
+0BFAED 00 00 00 00 00 00 	
+0BFAF3 00 00 00 00 00 00 	
+0BFAF9 00 00 00 00 00 00 	
+0BFAFF 00 00 00 00 00 00 	
+0BFB05 00 00 00 00 00 00 	
+0BFB0B 00 00 00 00 00 00 	
+0BFB11 00 00 00 00 00 00 	
+0BFB17 00 00 00 00 00 00 	
+0BFB1D 00 00 00 00 00 00 	
+0BFB23 00 00 00 00 00 00 	
+0BFB29 00 00 00 00 00 00 	
+0BFB2F 00 00 00 00 00 00 	
+0BFB35 00 00 00 00 00 00 	
+0BFB3B 00 00 00 00 00 00 	
+0BFB41 00 00 00 00 00 00 	
+0BFB47 00 00 00 00 00 00 	
+0BFB4D 00 00 00 00 00 00 	
+0BFB53 00 00 00 00 00 00 	
+0BFB59 00 00 00 00 00 00 	
+0BFB5F 00 00 00 00 00 00 	
+0BFB65 00 00 00 00 00 00 	
+0BFB6B 00 00 00 00 00 00 	
+0BFB71 00 00 00 00 00 00 	
+0BFB77 00 00 00 00 00 00 	
+0BFB7D 00 00 00 00 00 00 	
+0BFB83 00 00 00 00 00 00 	
+0BFB89 00                	dw_col:   db    0             ; DWGL : la colonne de la premiere case
+0BFB8A 00                	dw_lig:   db    0             ; DWGL : la ligne
+0BFB8B 00                	dw_tag:   db    0             ; DWGL : le tag, passe tel quel en B
+0BFB8C 00                	dw_n:     db    0             ; DWGL : le nombre de cases = 1 + les virgules
+0BFB8D 00 00 00 00 00 00 	dw_buf:   ds    dw_lmax+1     ; DWGL : les libelles, 0FFh entre chacun
+0BFB93 00 00 00 00 00 00 	
+0BFB99 00 00 00 00 00 00 	
+0BFB9F 00 00 00 00 00 00 	
+0BFBA5 00 00 00 00 00 00 	
+0BFBAB 00 00 00 00 00 00 	
+0BFBB1 00 00 00 00 00 00 	
+0BFBB7 00 00 00 00 00 00 	
+0BFBBD 00 00 00          	old_kw:   db    0,0,0
+0BFBC0 00 00 00          	old_disp: db    0,0,0
+0BFBC3                   	
+0BFBC3                   	        end
 
  - Symbols -
 
@@ -2101,10 +2289,27 @@
 000004h  dev_tape
 0000D9h  dh
 0000DDh  di
-0BF94Fh  disp_table
+0BFA45h  disp_table
 0000D8h  dl
 0BFC96h  dotsop
 0E01C2h  drv_off
+0BF76Ah  dwgl
+0BFB8Dh  dw_buf
+0BFB89h  dw_col
+0BF7BFh  dw_cp
+0BF845h  dw_err
+0BF7FDh  dw_lg
+0BFB8Ah  dw_lig
+00002Fh  dw_lmax
+0BF833h  dw_long
+0BFB8Ch  dw_n
+0BF7D1h  dw_put
+0BF83Fh  dw_range
+0BF843h  dw_syn
+0BFB8Bh  dw_tag
+0BF83Bh  dw_type
+0BF84Dh  dw_virg
+0BF858h  dw_vnon
 0BFCA2h  d_link
 0000F6h  eih
 0000F5h  eil
@@ -2142,6 +2347,7 @@
 0BFC8Dh  font_e0_ff
 0BFC84h  font_pool_end
 0BFC3Fh  funckey_flag
+0BFC40h  funckey_mode
 0BFC46h  funckey_name
 0BFC45h  funckey_slot
 0BF068h  hors_plage
@@ -2163,16 +2369,16 @@
 0BF5D9h  in_found
 0BF560h  in_havetext
 0BF5BFh  in_hit
-0BF991h  in_lt
+0BFA8Bh  in_lt
 0BF5C9h  in_miss
 0BF5D7h  in_notfound
 0BF591h  in_outer
-0BF993h  in_p
+0BFA8Dh  in_p
 0BF625h  in_range
-0BF992h  in_res
+0BFA8Ch  in_res
 0BF608h  in_ret
 0BF50Bh  in_sp
-0BF990h  in_start
+0BFA8Ah  in_start
 0BF61Bh  in_syn
 0BF602h  in_syn0
 0BF611h  in_type
@@ -2229,7 +2435,7 @@
 0000F2h  ki
 0000F0h  ko
 0000F1h  koh
-0BF8E7h  kw_table
+0BF9D7h  kw_table
 0BF254h  lcase
 0BF251h  lcase_m3
 0000FEh  lcc
@@ -2287,8 +2493,8 @@
 0BF1D4h  md_zero
 0BF106h  modu
 0BF103h  modu_m3
-0BFA92h  old_disp
-0BFA8Fh  old_kw
+0BFBC0h  old_disp
+0BFBBDh  old_kw
 0000EDh  px
 0000EEh  py
 0BF1DEh  rd1str
@@ -2306,13 +2512,13 @@
 0BF21Ch  ret_str
 0BF3C8h  rp_bad
 0BF3EEh  rp_buf
-0BF98Fh  rp_c
+0BFA89h  rp_c
 0BF3B6h  rp_done
 0BF36Dh  rp_ec
 0BF3A2h  rp_fill
 0BF3B0h  rp_fl
 0BF36Fh  rp_hc
-0BF98Eh  rp_n
+0BFA88h  rp_n
 0BF3E4h  rp_range
 0BF3C7h  rp_ret
 0BF318h  rp_sp
@@ -2325,11 +2531,14 @@
 0000F9h  rxd
 0BFCDEh  s1_btm
 0BFC18h  s1_cap
+0BFC1Ah  s1_flags
 0BFC1Bh  s1_tail
 0BFC15h  s1_top
 0BFC12h  s2_cap
+0BFC14h  s2_flags
 0BFC0Fh  s2_top
 0BFC0Ch  s3_cap
+0BFC0Eh  s3_flags
 0BFC09h  s3_top
 0000FDh  scr
 0BFC27h  scrn_crsr_x
@@ -2355,29 +2564,30 @@
 0BF3FAh  srept_m3
 0BF4D6h  sr_bad
 0BF4FCh  sr_buf
-0BF995h  sr_cnt
+0BFA8Fh  sr_cnt
 0BF4C4h  sr_done
 0BF481h  sr_grow
 0BF4C2h  sr_grown
 0BF4AEh  sr_ic
 0BF46Dh  sr_lenok
 0BF461h  sr_mul
-0BF994h  sr_n
+0BFA8Eh  sr_n
 0BF4A0h  sr_oc
 0BF4F2h  sr_range
 0BF4D5h  sr_ret
 0BF3FDh  sr_sp
-0BF996h  sr_src
+0BFA90h  sr_src
 0BF4E8h  sr_syn
 0BF4CFh  sr_syn0
 0BF4DEh  sr_type
 0000FFh  ssr
 0BF000h  start
 0BF225h  st_err
-0BF988h  sv_a
-0BF98Bh  sv_bp0
-0BF98Ch  sv_bp1
+0BFA82h  sv_a
+0BFA85h  sv_bp0
+0BFA86h  sv_bp1
 0BFCE1h  swork
+0000D3h  tk_dw
 0000C2h  tk_in
 0000C7h  tk_lc
 000007h  tk_lp
@@ -2392,7 +2602,7 @@
 00000Ah  tk_wp
 0000CAh  tk_xc
 0000CFh  tk_xcl
-0BF98Dh  tmode
+0BFA87h  tmode
 0BF27Fh  trim
 0BF27Ch  trim_m3
 0BF2FCh  tr_cp
@@ -2414,13 +2624,13 @@
 0BFD1Ah  usrwrk
 0BF074h  wpeek
 0BF071h  wpeek_m3
-0BF7A4h  xb_end
-0BF78Ah  xb_lp
+0BF894h  xb_end
+0BF87Ah  xb_lp
 0BF70Fh  xcls
-0BF99Ch  xcl_y
+0BFA96h  xcl_y
 0BF62Fh  xconsole
 0BF67Eh  xc_apply
-0BF99Ah  xc_c
+0BFA94h  xc_c
 0BF668h  xc_comma
 0BF6C8h  xc_err
 0BF69Eh  xc_full
@@ -2430,39 +2640,39 @@
 0BF6D0h  xc_skip
 0BF6A0h  xc_store
 0BF6C2h  xc_syn
-0BF999h  xc_t
-0BF99Bh  xc_top
+0BFA93h  xc_t
+0BFA95h  xc_top
 0BF6B5h  xc_unhook
-0BF89Ch  xfc_at
-0BF88Eh  xfc_lp
-0BF8A4h  xfc_no
-0BF99Fh  xf_buf
-0BF7A7h  xf_call
-0BF76Ah  xf_entry
-0BF874h  xf_fcb
-0BF8CCh  xf_off
-0BF8A6h  xf_on
-0BF776h  xf_pass
-0BF7ACh  xf_pre
-0BF826h  xf_scroll
-0BF99Dh  xf_w
-0BF788h  xf_wblock
-0BF77Ah  xf_wbyte
-0BF99Eh  xf_y
+0BF98Ch  xfc_at
+0BF97Eh  xfc_lp
+0BF994h  xfc_no
+0BFA99h  xf_buf
+0BF897h  xf_call
+0BF85Ah  xf_entry
+0BF964h  xf_fcb
+0BF9BCh  xf_off
+0BF996h  xf_on
+0BF866h  xf_pass
+0BF89Ch  xf_pre
+0BF916h  xf_scroll
+0BFA97h  xf_w
+0BF878h  xf_wblock
+0BF86Ah  xf_wbyte
+0BFA98h  xf_y
 0BF740h  xl_done
 0BF719h  xl_loop
 0BF707h  xn_fail
 0BF705h  xn_range
 0BF701h  xn_type
-0BF8E6h  xof_ret
-0BF8CBh  xon_ret
-0BF8B9h  xon_set
-0BF7FCh  xp_chk
-0BF825h  xp_none
-0BF7FAh  xp_nw
-0BF7E5h  xp_wrap
-0BF865h  xs_clr
-0BF82Eh  xs_lp
+0BF9D6h  xof_ret
+0BF9BBh  xon_ret
+0BF9A9h  xon_set
+0BF8ECh  xp_chk
+0BF915h  xp_none
+0BF8EAh  xp_nw
+0BF8D5h  xp_wrap
+0BF955h  xs_clr
+0BF91Eh  xs_lp
 0BF6DAh  xs_ret
 
-  No fatal error.  Code: 0BF000h - 0BFA94h [     2709 byte(s)]
+  No fatal error.  Code: 0BF000h - 0BFBC2h [     3011 byte(s)]

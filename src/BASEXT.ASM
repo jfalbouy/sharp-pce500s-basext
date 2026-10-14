@@ -166,6 +166,7 @@ tk_sr:    equ   0C9H       ; SREPT$
 tk_in:    equ   0C2H       ; INSTR (rend un NOMBRE)
 tk_xc:    equ   0CAH       ; XCONSOLE (instruction) -- libre, hors BASCOM (CB-CE)
 tk_xcl:   equ   0CFH       ; XCLS     (instruction) -- libre, hors BASCOM
+tk_dw:    equ   0D3H       ; DWGL     (instruction) -- libre, hors BASCOM (CB-CE)
 fhandle:  equ   0BFC6DH    ; FHANDLE : handle -> numero de bloc de controle
                           ; (absent de pce500.inc ; lu par 0E06A1h)
 alloc:    equ   0EF0DDH    ; reserve BA octets sur U (U -= BA) ; carry = erreur 54
@@ -186,6 +187,7 @@ err_range: equ  021H       ; erreur BASIC 33, Data out of range
 err_type: equ   05AH       ; erreur BASIC 90, Type mismatch -- le code que
                           ; chknum emploie lui-meme (0EFC04h)
 err_buf:  equ   036H       ; erreur BASIC 54, Buffer space exceeded
+dw_lmax:  equ   02FH       ; DWGL : longueur maxi de la chaine (47), tampon 48
 err_div:  equ   015H       ; erreur BASIC 21, Division by zero -- le code
                           ; que la ROM elle-meme emploie, lu en 0ECD67h
 
@@ -1553,6 +1555,177 @@ xl_done:
         retf
 
 ; ============================================================================
+; L'INSTRUCTION DWGL colonne,ligne,tag,chaine$  --  la barre de cases
+; ============================================================================
+; La « ligne de guide » du manuel technique (IOCS 058h du device 0), celle de
+; l'ecran MENU et des libelles de touches de fonction, ouverte au BASIC :
+;
+;   DWGL 0,3,0,"BASIC ,DUMPM ,DRIVER,TRDOS ,SUITE "
+;        |  | |  les libelles, separes par des virgules : 1 a 5 cases
+;        |  | le registre B : bit 0 = parentheses au lieu de crochets,
+;        |  |                 bit 7 = garder le reste de la ligne
+;        |  la ligne, 0 a 3
+;        la colonne de la premiere case
+;
+; ⛔ SIX CARACTERES PAR CASE, ET C'EST LA ROM QUI LE FIGE (« mv il,006h » en
+;    0F2CB5h) : une case fait huit colonnes, cinq cases remplissent la ligne de
+;    40. Un libelle plus COURT est complete par des espaces par la ROM elle-meme
+;    (LOC_F2CE1), un plus LONG est tronque -- elle saute jusqu'au 0FFh suivant
+;    (LOC_F2CCF). DWGL n'a donc ni a completer ni a tronquer : il lui suffit de
+;    remplacer chaque virgule par le 0FFh qui termine un libelle.
+;
+; ⛔ PAS DE REPLI DE LIGNE : l'ecriture d'un caractere refuse des que la colonne
+;    atteint 40 ou la ligne 4 (0F23C3h), et les cases perdues le sont EN
+;    SILENCE. DWGL refuse donc lui-meme (erreur 33) : ligne >= 4, plus de cinq
+;    cases, ou colonne + 8 x cases > 40. Pour dix choix, deux appels -- comme la
+;    ROM, qui garde un drapeau de page et ajoute 5 a l'indice (referentiel
+;    04-fcs-iocs.md §2.4quater, BASEXT/CONCEPTION-DWGL.md §3).
+;
+; ⚠️ DWGL N'EST PAS fkey_display : il ne refait aucun de ses trois controles. Il
+;    ecrit sur la ligne demandee, qu'elle porte du texte ou non -- c'est a
+;    l'appelant de lui reserver la place (CONSOLE 0, ou XCONSOLE). C'est le
+;    parti de GUIDE.ASM, eprouve sur PC-E500S le 2026-10-12.
+;
+; ⚠️ LE FILTRE DE XCONSOLE NE LA VOIT PAS : il est branche sur le handle 0 du
+;    FCS, et 058h passe par l'IOCS. Une barre tracee dans une fenetre XCONSOLE
+;    en sort.
+;
+; Les trois nombres se lisent par xc_num (eval + dec2bin, 0 a 255, BP rendu en
+; ABSOLU) ; la chaine par eval, comme INSTR : elle vit SUR U, c'est de la qu'on
+; la lit (« mv x,u »), et on la libere ensuite (« add u,(BP+4) »).
+dwgl:
+        mv      [!sv_bp0],(bp_ram)      ; une INSTRUCTION rend BP inchange
+        call    xc_num                  ; (1) la colonne
+        jrc     dw_err
+        mv      [!dw_col],a
+        call    dw_virg
+        jrc     dw_syn
+        call    xc_num                  ; (2) la ligne
+        jrc     dw_err
+        mv      [!dw_lig],a
+        call    dw_virg
+        jrc     dw_syn
+        call    xc_num                  ; (3) le tag = le registre B
+        jrc     dw_err
+        mv      [!dw_tag],a
+        call    dw_virg
+        jrc     dw_syn
+
+; --- (4) la chaine des libelles --------------------------------------------
+        callf   eval
+        jrc     dw_err                  ; A porte deja le code d'erreur
+        test    (BP+0),080H
+        jrz     dw_type                 ; ce n'est pas une chaine
+        mv      a,(BP+4)                ; sa longueur
+        cmp     a,000H
+        jrz     dw_type                 ; chaine vide : aucun libelle
+        cmp     a,dw_lmax+1
+        jrnc    dw_long                 ; plus longue que le tampon
+
+; --- le tampon : chaque ',' devient le 0FFh de fin de libelle --------------
+; ⛔ X EST LE POINT DE REPRISE DU BASIC, et « mv x,u » l'ecrase. INSTR le sauve
+;    par pushs/pops autour de sa comparaison (in_cmp) : on fait de meme. La
+;    premiere version ne le faisait pas -- l'interpreteur reprenait alors sur la
+;    pile U, et l'essai en emulation (essais/DWGLEMU.py) l'a montre a la
+;    premiere execution.
+        mv      il,a                    ; le compteur de caracteres
+        pushs   x                       ; le point de reprise du BASIC
+        mv      x,u                     ; la chaine est SUR U (comme INSTR)
+        mv      y,dw_buf
+        mv      a,001H
+        mv      [!dw_n],a               ; une case, plus une par virgule
+dw_cp:
+        mv      a,[x++]
+        cmp     a,02CH                  ; ','
+        jrnz    dw_put
+        mv      a,[!dw_n]
+        inc     a
+        mv      [!dw_n],a
+        mv      a,0FFH
+dw_put:
+        mv      [y++],a
+        dec     il
+        jrnz    dw_cp
+        mv      a,0FFH
+        mv      [y],a                   ; le 0FFh du dernier libelle
+        pops    x                       ; rendre le point de reprise
+
+; --- rendre la chaine a U, puis le cadre d'eval ----------------------------
+        mv      a,(BP+4)
+        add     u,a                     ; comme BAS_LEN (0EECB2h) et INSTR
+        mv      (bp_ram),[!sv_bp0]
+
+; --- les refus que la ROM ne prononce pas ----------------------------------
+        mv      a,[!dw_n]
+        cmp     a,006H
+        jrnc    dw_range                ; plus de cinq cases
+        mv      il,a
+        mv      a,[!dw_lig]
+        cmp     a,004H
+        jrnc    dw_range                ; 0F23C3h refuse une ligne >= 4
+        mv      a,[!dw_col]
+dw_lg:
+        add     a,008H                  ; huit colonnes par case
+        dec     il
+        jrnz    dw_lg
+        cmp     a,029H
+        jrnc    dw_range                ; colonne + 8 x cases > 40
+
+; --- l'appel, aux octets de la ROM (0F1D29h) -------------------------------
+        pushu   x                       ; X = le point de reprise du BASIC
+        pushu   i
+        mv      a,[!dw_col]
+        mv      (bl),a
+        mv      a,[!dw_lig]
+        mv      (bh),a
+        mv      a,[!dw_tag]
+        mv      b,a                     ; B = le tag (bits 0 et 7)
+        mv      a,[!dw_n]               ; A = le nombre de cases
+        mv      x,dw_buf                ; X = les libelles, 0FFh entre chacun
+        mvw     (cl),00000H             ; device 0, lecteur 0 : l'ecran
+        mv      il,d0_guide_line
+        callf   iocs_call
+        popu    i
+        popu    x
+        rc                              ; ⛔ 058h ne fixe PAS la retenue
+        retf
+
+; Refus APRES la lecture de la chaine : elle est sur U, et rendre l'etat
+; d'avant l'appel (MODE-EMPLOI §6.6) demande de la rendre aussi. Les deux
+; autres refus de chaine n'ont rien a rendre : une chaine vide n'occupe rien,
+; et un argument qui n'est pas une chaine n'a rien empile.
+dw_long:
+        mv      a,(BP+4)
+        add     u,a
+        mv      a,err_range
+        jr      dw_err
+dw_type:
+        mv      a,err_type
+        jr      dw_err
+dw_range:
+        mv      a,err_range
+        jr      dw_err
+dw_syn:
+        mv      a,err_syn
+dw_err:
+        mv      (bp_ram),[!sv_bp0]      ; l'etat d'avant l'appel (MODE-EMPLOI §6.6)
+        sc
+        retf
+
+; dw_virg -- exige une virgule, espaces sautes ; CY=1 si elle manque.
+;            APPEL PROCHE.
+dw_virg:
+        call    xc_skip
+        cmp     a,02CH
+        jrnz    dw_vnon
+        inc     x
+        rc
+        ret
+dw_vnon:
+        sc
+        ret
+
+; ============================================================================
 ; LE FILTRE D'ECRITURE DE STDO:  --  confine le defilement a la fenetre
 ; ============================================================================
 ; ⛔ LE FILTRE NE SE CHAINE PAS DANS d_link, ET C'EST LA MACHINE QUI LE DIT.
@@ -1852,6 +2025,7 @@ kw_table:
         db      5,'INSTR',tk_in
         db      8,'XCONSOLE',tk_xc
         db      4,'XCLS',tk_xcl
+        db      4,'DWGL',tk_dw
         db      0                       ; fin de table
 
 disp_table:
@@ -1885,6 +2059,7 @@ disp_table:
         db      tk_in, instr_m3, instr_m3/256, instr_m3/65536+040H
         db      tk_xc,  xconsole, xconsole/256, xconsole/65536+080H   ; instructions :
         db      tk_xcl, xcls,     xcls/256,     xcls/65536+080H       ; pas de +3
+        db      tk_dw,  dwgl,     dwgl/256,     dwgl/65536+080H
         db      0                       ; fin de table
 
 ; ============================================================================
@@ -1924,6 +2099,11 @@ xcl_y:    db    0             ; XCLS : la ligne en cours d'effacement
 xf_w:     db    0             ; filtre : 1 si retour a la ligne differe
 xf_y:     db    0             ; filtre : la ligne en cours de remontee
 xf_buf:   ds    240           ; filtre : le motif d'une ligne (240 colonnes)
+dw_col:   db    0             ; DWGL : la colonne de la premiere case
+dw_lig:   db    0             ; DWGL : la ligne
+dw_tag:   db    0             ; DWGL : le tag, passe tel quel en B
+dw_n:     db    0             ; DWGL : le nombre de cases = 1 + les virgules
+dw_buf:   ds    dw_lmax+1     ; DWGL : les libelles, 0FFh entre chacun
 old_kw:   db    0,0,0
 old_disp: db    0,0,0
 

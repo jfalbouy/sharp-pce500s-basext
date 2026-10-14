@@ -1,6 +1,6 @@
 # Créer une instruction BASIC — mode d'emploi et référentiel
 
-*Rédigé le 2026-09-15 — mis à jour le 2026-09-26*
+*Rédigé le 2026-09-15 — mis à jour le 2026-10-14*
 
 **PC-E500S, ROM 8.3.** Comment greffer ses propres mots-clés sur l'interpréteur : les
 instructions standard et leur mécanique, la procédure, les adresses de la ROM à employer, et la
@@ -923,6 +923,63 @@ lp_pop: popu    y               ; chknum/dec2bin en echec : cadre deja rendu
 
 ---
 
+### 8.5 Instruction à quatre arguments, dont une chaîne — `DWGL col,lig,tag,s$`
+
+Le cas général : plusieurs nombres, une chaîne, et des virgules obligatoires entre eux. La clé
+est de **rendre `BP` en absolu après chaque argument** (`sv_bp0`), de sorte qu'aucun cadre ne
+s'empile et que le compte ne puisse pas être faux.
+
+```asm
+dwgl:
+        mv      [!sv_bp0],(bp_ram)      ; une INSTRUCTION rend BP inchange
+        call    xc_num                  ; un nombre 0-255, cadre rendu
+        jrc     dw_err                  ;   (eval + dec2bin + mv (bp_ram),[!sv_bp0])
+        mv      [!dw_col],a
+        call    dw_virg                 ; la virgule, espaces sautes
+        jrc     dw_syn
+        ...                             ; les deux autres nombres, de meme
+        callf   eval                    ; la chaine, en dernier
+        jrc     dw_err
+        test    (BP+0),080H
+        jrz     dw_type                 ; 90 si ce n'est pas une chaine
+        mv      a,(BP+4)                ; sa longueur
+        mv      il,a
+        pushs   x                       ; ⛔ X EST LE POINT DE REPRISE DU BASIC
+        mv      x,u                     ; ⛔ la chaine est SUR U, pas en (BP+1)
+        ...                             ; la recopier dans un tampon du module
+        pops    x                       ; rendre le point de reprise
+        mv      a,(BP+4)
+        add     u,a                     ; la rendre a U (comme BAS_LEN 0EECB2h)
+        mv      (bp_ram),[!sv_bp0]      ; et rendre le cadre d'eval
+        ...                             ; les controles, puis le travail
+        rc
+        retf
+
+; dw_virg -- exige une virgule ; CY=1 si elle manque.  APPEL PROCHE.
+dw_virg:
+        call    xc_skip                 ; X reste SUR le premier non-espace
+        cmp     a,02CH
+        jrnz    dw_vnon
+        inc     x
+        rc
+        ret
+dw_vnon:
+        sc
+        ret
+```
+
+| Règle | Pourquoi |
+|---|---|
+| `BP` rendu **en absolu** après chaque argument | un `pmdf` par argument se compte, et le compte se trompe (§6.1) |
+| la chaîne lue **en dernier** | elle reste sur `U` jusqu'à ce qu'on la libère ; un nombre lu après elle ne la déplacerait pas, mais l'ordre « nombres puis chaîne » évite d'avoir à en tenir le compte |
+| la chaîne lue **à `U`**, pas en `(BP+1)` | c'est ce que fait `INSTR`, éprouvé ; `(BP+1)` n'a été vérifié pour aucun chemin |
+| les virgules lues **à la main** | aucun évaluateur ne les consomme (§5.3) |
+| ⛔ `X` sauvé par **`pushs`/`pops`** autour de la copie | `mv x,u` écrase le **point de reprise du BASIC**. C'est l'idiome d'`INSTR` (`0BF599h` : `B4 37` / `94 27`). Sans lui, l'interpréteur reprend sur la pile `U` : *Syntax error*, ou pire. Trouvé en exécutant le code, pas en le relisant |
+| l'ordre : **tampon, puis libération de `U`, puis contrôles** | après la libération, tout chemin d'erreur est propre — il n'y a plus rien à rendre |
+| un refus **après** la lecture de la chaîne rend `U` lui aussi | « rendre l'état d'avant l'appel » (§6.6) vaut pour `U` comme pour `BP` ; sinon un `ON ERROR` dans une boucle fait descendre `U` à chaque passage |
+
+---
+
 ## 9. Mise en œuvre sur la machine
 
 ### 9.1 Assembler et vérifier l'objet
@@ -1026,6 +1083,7 @@ Tous ont coûté au moins une séance.
 | ⛔ service en `ret` | l'entrée en `retf` | §4 |
 | ⛔ `X` sauvé avant l'évaluation | `pushu x` **après** `chknum`/`eval` | §4, §8.1 |
 | ⛔ `X` écrasé par `bin2dec` | `pushu x`/`popu x` autour | §6.2 |
+| ⛔ `X` écrasé par **`mv x,u`** pour lire une chaîne | `pushs x`/`pops x` autour, comme `INSTR` : `X` est le **point de reprise du BASIC** et rien ne le rappelle. Trouvé le 2026-10-14 en **exécutant** `DWGL` (`essais/DWGLEMU.py`), pas en la relisant | §8.5 |
 | ⛔ parenthèse laissée à l'évaluateur | la consommer soi-même | §5.3 |
 | ⛔ `chknum` pour une expression | `eval` dès qu'il y a des parenthèses | §5.1 |
 | ⚠️ `eval` ne vérifie pas le type | tester le bit 7 de `(BP+0)` | §5.1 |
@@ -1074,7 +1132,7 @@ Tous ont coûté au moins une séance.
 | 5 | Un token d'extension **à la fois instruction et fonction** (drapeau `0C0h`) | reproduire le trampoline des six tokens doubles |
 | 6 | 📖 Une fonction d'extension sur un token **d'instruction de la ROM** : la lecture des résolveurs le permettrait (la ROM ne porte pas le bit `040h`, le résolveur passe à l'extension), mais le nom se tokenise d'abord par la table de la ROM | essai |
 | 7 | Les tokens `1Eh`, `1Fh`, `FEh`, `FFh` | essai (§2.3) |
-| 8 | Trois arguments ou plus | lire `MID$` (`0FD75Ah`) : `0FC613h`, puis deux `0FD7E7h` séparés par `,` |
+| 8 | ✅ **Clos** — **quatre** arguments, trois nombres et une chaîne, écrits le 2026-10-14 pour `DWGL colonne,ligne,tag,chaine$` (§8.5) : chaque nombre par un **`eval` + `dec2bin`** encapsulés, la chaîne par un `eval` final, et la **ponctuation lue à la main** entre chacun. Il n'a pas fallu lire `MID$` : la difficulté supposée n'existe pas, dès lors que `BP` est rendu **en absolu** après chaque argument. ✅ Éprouvé sur PC-E500S le 2026-10-14 (`essais/DWGLTEST.BAS`) | — |
 | 9 | Le cadre de `STR$` (`0FD6CDh`) : `0FC13Ch` n'a pas été lu, le bilan de `BP` n'est donc pas établi pour ce chemin | lire `0FC13Ch` |
 | 10 | Un **`.BSA`** d'essai, qui échapperait au piège de la tokenisation | vérifier que `Sharp Basic Converter` accepte un token hors des 168 |
 
