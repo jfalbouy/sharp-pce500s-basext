@@ -1065,11 +1065,13 @@ machine, qui y lirait des noms de variables.
 que le Sharp produit lui-même (`DRVTEST.BSA`, 1131 octets, pointeurs de saut compris). `bsa_basext.py`
 s'en sert donc tel quel et ne corrige qu'un octet par mot-clé :
 
-1. chaque mot-clé de BASEXT est remplacé, **hors chaînes et hors `REM`**, par une **doublure** —
-   une **fonction** de la ROM absente du programme (jamais une instruction de saut : `GOTO`,
+1. la liste des mots-clés est **lue dans `src/BASEXT.ASM`** (les `equ` des tokens et la
+   `kw_table`), jamais recopiée : un seizième mot-clé y sera connu d'office ;
+2. chaque mot-clé est remplacé, **hors chaînes et hors `REM`**, par une **doublure** — une
+   **fonction** de la ROM absente du programme (jamais une instruction de saut : `GOTO`,
    `THEN`… feraient résoudre un **pointeur**) ;
-2. `sharpbasic compress` fait tout le travail ;
-3. dans le `.BSA`, l'octet de token de la doublure est remis à sa vraie valeur.
+3. `sharpbasic compress` fait tout le travail ;
+4. dans le `.BSA`, l'octet de token de la doublure est remis à sa vraie valeur.
 
 **Pourquoi c'est sûr** : doublure et mot-clé pèsent tous deux `FEh` + 1 octet, donc **aucune
 longueur ne bouge** — ni celle des lignes, ni les **pointeurs de saut**, qui valent « offset dans le

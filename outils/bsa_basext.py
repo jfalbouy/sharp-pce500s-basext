@@ -35,13 +35,30 @@ import sys
 
 SHARPBASIC = r"C:\Claude\Sharp Basic Converter\Publish\sharpbasic.exe"
 
-# les mots-cles de BASEXT et leur token (src/BASEXT.ASM)
-BASEXT = {
-    "LPEEK": 0x07, "WPEEK": 0x0A, "LPOKE": 0x0E, "MOD": 0x0F,
-    "INSTR": 0xC2, "TRIM$": 0xC3, "LTRIM$": 0xC4, "RTRIM$": 0xC5,
-    "UCASE$": 0xC6, "LCASE$": 0xC7, "REPT$": 0xC8, "SREPT$": 0xC9,
-    "XCONSOLE": 0xCA, "XCLS": 0xCF, "DWGL": 0xD3,
-}
+BASEXT = {}          # rempli par mots_de_basext(), au demarrage
+ASM = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                   "..", "src", "BASEXT.ASM")
+
+
+def mots_de_basext():
+    r"""Les mots-cles et leurs tokens, LUS DANS src/BASEXT.ASM -- jamais recopies
+        ici. Un seizieme mot-cle ajoute la-bas est donc connu d'office, et un
+        token change ne peut pas laisser cet outil en arriere. On lit les deux
+        choses qui le definissent :
+           tk_dw:    equ   0D3H
+           db      4,'DWGL',tk_dw        (dans kw_table)"""
+    src = open(ASM, encoding="utf-8").read()
+    equ = {m.group(1): int(m.group(2), 16) for m in
+           re.finditer(r"^(tk_\w+):\s*equ\s+0?([0-9A-Fa-f]+)H", src, re.M)}
+    table = {}
+    for m in re.finditer(r"^\s*db\s+\d+,'([A-Z0-9$]+)',(tk_\w+)", src, re.M):
+        nom, cle = m.group(1), m.group(2)
+        if cle not in equ:
+            erreur("BASEXT.ASM : %s sans equ" % cle)
+        table[nom] = equ[cle]
+    if not table:
+        erreur("BASEXT.ASM : kw_table illisible")
+    return table
 
 CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                    "..", "donnees", "tokens-rom83.csv")
@@ -149,8 +166,11 @@ def echanger_tokens(octets, paires):
 
 
 def main():
+    global BASEXT
     if len(sys.argv) < 2:
         erreur("usage : bsa_basext.py <fichier.BAS> [-o <sortie.BSA>]")
+    BASEXT = mots_de_basext()
+    print("%d mots-cles lus dans src/BASEXT.ASM" % len(BASEXT))
     src = os.path.abspath(sys.argv[1])
     sortie = None
     if "-o" in sys.argv:
