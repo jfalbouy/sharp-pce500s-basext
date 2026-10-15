@@ -1,6 +1,6 @@
 # Créer une instruction BASIC — mode d'emploi et référentiel
 
-*Rédigé le 2026-09-15 — mis à jour le 2026-10-14*
+*Rédigé le 2026-09-15 — mis à jour le 2026-10-15*
 
 **PC-E500S, ROM 8.3.** Comment greffer ses propres mots-clés sur l'interpréteur : les
 instructions standard et leur mécanique, la procédure, les adresses de la ROM à employer, et la
@@ -56,7 +56,7 @@ manière de rendre la main au BASIC.
 | 7 | **Assembler** | `xasm2026-4 BASEXT.ASM -O -L -S -B -K`, puis **vérifier l'objet** : `30 84 D1` pour `mv x,(basptr)`, pas de PRE devant les `(BP+n)` | 9.1 |
 | 8 | **Réserver la zone** langage machine | le module doit tomber entre `[0BFD1Ah]` et le plafond `0BFC00h` | 9.2 |
 | 9 | **Installer, vérifier, PUIS charger le programme** | le BASIC tokenise à la saisie : un programme saisi avant l'installation garde des noms de variables | 9.3 |
-| 10 | **Éprouver chaque refus** | un cas par code d'erreur, et le contrôle croisé par le BASIC lui-même | 9.4 |
+| 10 | **Éprouver chaque refus** | un cas par code d'erreur, et le contrôle croisé par le BASIC lui-même | 9.5 |
 
 ---
 
@@ -1051,7 +1051,41 @@ des BASIC Microsoft — est **refusé** par ce BASIC : il faut `CHR$ 34`. La for
 `IF INKEY$ ="" THEN …`. Ce qui est refusé, c'est le guillemet doublé **à l'intérieur** d'une
 chaîne non vide. Relevé par J.-F. Albouy le 2026-09-26, sur six lignes de programmes d'essai.
 
-### 9.4 Éprouver
+### 9.4 Produire un `.BSA` d'un programme qui emploie vos mots-clés
+
+```powershell
+python C:\Claude\BASEXT\outils\bsa_basext.py essais\DWGLTEST.BAS
+```
+
+⛔ **`Sharp Basic Converter` seul ne suffit pas**, mesuré le 2026-10-15 : il tokenise les 168
+mots-clés de la ROM et eux seuls, et laisse les vôtres **en clair**. Le `.BSA` serait refusé par la
+machine, qui y lirait des noms de variables.
+
+✅ **Mais il ne faut pas le remplacer pour autant** : son `.BSA` est **identique à l'octet** à celui
+que le Sharp produit lui-même (`DRVTEST.BSA`, 1131 octets, pointeurs de saut compris). `bsa_basext.py`
+s'en sert donc tel quel et ne corrige qu'un octet par mot-clé :
+
+1. chaque mot-clé de BASEXT est remplacé, **hors chaînes et hors `REM`**, par une **doublure** —
+   une **fonction** de la ROM absente du programme (jamais une instruction de saut : `GOTO`,
+   `THEN`… feraient résoudre un **pointeur**) ;
+2. `sharpbasic compress` fait tout le travail ;
+3. dans le `.BSA`, l'octet de token de la doublure est remis à sa vraie valeur.
+
+**Pourquoi c'est sûr** : doublure et mot-clé pèsent tous deux `FEh` + 1 octet, donc **aucune
+longueur ne bouge** — ni celle des lignes, ni les **pointeurs de saut**, qui valent « offset dans le
+fichier + 33 » (`Sharp Basic Converter/Format-BASIC-tokenise-PC-E500S.md` §3). L'outil vérifie son
+résultat par aller-retour **binaire** : il repose les doublures, décompresse, recompresse, et exige
+les mêmes octets.
+
+✅ **Éprouvé contre la machine** : le `.BSA` de `BEXTTEST.BAS` produit ainsi est **identique à
+l'octet** (1440) à celui que le PC-E500S a écrit lui-même, les quinze mots-clés tokenisés, `DWGL`
+compris.
+
+✅ **Et la machine sait relire ses propres noms** : un `SAVE` texte depuis le Sharp rend
+`DWGL`, `XCONSOLE`, `XCLS` **écrits en toutes lettres**, bien qu'ils soient absents de la table des
+noms de la ROM — le listing rendu par la machine est identique à notre `.BAS` de départ.
+
+### 9.5 Éprouver
 
 Un essai n'est complet que s'il couvre **chaque refus** avec son code, et si le BASIC contrôle
 lui-même le résultat sur un grand nombre de valeurs (`MODTEST.BAS` : 40 contrôles contre
@@ -1134,7 +1168,7 @@ Tous ont coûté au moins une séance.
 | 7 | Les tokens `1Eh`, `1Fh`, `FEh`, `FFh` | essai (§2.3) |
 | 8 | ✅ **Clos** — **quatre** arguments, trois nombres et une chaîne, écrits le 2026-10-14 pour `DWGL colonne,ligne,tag,chaine$` (§8.5) : chaque nombre par un **`eval` + `dec2bin`** encapsulés, la chaîne par un `eval` final, et la **ponctuation lue à la main** entre chacun. Il n'a pas fallu lire `MID$` : la difficulté supposée n'existe pas, dès lors que `BP` est rendu **en absolu** après chaque argument. ✅ Éprouvé sur PC-E500S le 2026-10-14 (`essais/DWGLTEST.BAS`) | — |
 | 9 | Le cadre de `STR$` (`0FD6CDh`) : `0FC13Ch` n'a pas été lu, le bilan de `BP` n'est donc pas établi pour ce chemin | lire `0FC13Ch` |
-| 10 | Un **`.BSA`** d'essai, qui échapperait au piège de la tokenisation | vérifier que `Sharp Basic Converter` accepte un token hors des 168 |
+| 10 | ✅ **Clos le 2026-10-15, et la réponse est non** : `Sharp Basic Converter` tokenise les 168 mots-clés de la ROM **et eux seuls** — il laisse `DWGL`, `XCONSOLE`, `XCLS`, `SREPT$` **en clair** dans le `.BSA`, que la machine lirait alors comme des noms de variables. Parade : **`outils/bsa_basext.py`** (§9.4) | — |
 
 ---
 

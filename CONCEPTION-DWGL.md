@@ -134,8 +134,10 @@ sélection. La même routine sert à deux autres écrans système (`0E1142h`, `0
 devinée :
 
 ```basic
-GCURSOR (1,25):GPRINT "0A1B1B0A"
+GCURSOR (1,23):GPRINT "0A1B1B0A"
 ```
+
+(la ROM, elle, est à **25** ; le pourquoi du 23 est deux paragraphes plus bas)
 
 | Ce qu'il fallait savoir | Où c'est lu |
 |---|---|
@@ -148,9 +150,10 @@ GCURSOR (1,25):GPRINT "0A1B1B0A"
 `GCURSOR (6 × colonne + 1, 8 × ligne + 1)` — 6 points par colonne de caractère, et `8 × ligne + 1`
 redonne 25 pour la ligne 3.
 
-✅ **Fidèle au point près, vérifié en comparant les deux clichés** (l'écran `MENU` de la machine
-et notre tracé, mêmes 816 × 186 pixels, 2026-10-15). Les lignes de points sombres sont les
-**mêmes dans les deux images** :
+✅ **Fidèle au point près, vérifié deux fois** : en comparant les deux clichés (l'écran `MENU` de
+la machine et notre tracé, mêmes 816 × 186 pixels), puis **sur le Sharp réel le 2026-10-15**, qui
+donne le même résultat que l'émulateur. Les lignes de points sombres sont les **mêmes dans les
+deux images** :
 
 | | marqueur | barre |
 |---|---|---|
@@ -160,8 +163,30 @@ et notre tracé, mêmes 816 × 186 pixels, 2026-10-15). Les lignes de points som
 Soit, en points d'écran : fenêtre de huit points de 18 à 25, allumés en **18, 19, 21, 22** — le
 bit de poids faible est bien le point du **haut** —, puis **une seule ligne de points vide**
 (23) avant le haut du crochet (24). ⚠️ **Ce voisinage serré n'est pas un défaut de notre ligne :
-c'est l'espacement de la machine elle-même.** Qui le veut plus aéré descend l'ordonnée :
-`GCURSOR (1,23)` laisse trois lignes vides et reste dans la ligne 2.
+c'est l'espacement de la machine elle-même.**
+
+⛔ **Et le motif n'est pas « décalé de deux points », question posée après l'essai sur machine :
+il est déjà calé en haut de l'octet.** Le dessin tient sur les points **0 à 4** de la colonne de
+huit, les points 5, 6 et 7 étant vides — on ne peut donc pas le remonter dans le motif, seule
+l'ordonnée le déplace :
+
+```
+0Ah 1Bh 1Bh 0Ah        point 0 : .##.      point 4 : .##.
+                       point 1 : ####      point 5 : ....
+                       point 2 : ....      point 6 : ....
+                       point 3 : ####      point 7 : ....
+```
+
+| `GCURSOR` | fenêtre | dessin | points libres avant la barre (24) | |
+|---|---|---|---|---|
+| `(1,25)` | 18 à 25 | 18 à 22 | **1** | la ROM, et c'est trop serré à l'œil |
+| `(1,24)` | 17 à 24 | 17 à 21 | 2 | |
+| `(1,23)` | 16 à 23 | 16 à 20 | **3** | ✅ **retenu** le 2026-10-15, après essai sur le Sharp |
+
+✅ **Valeur retenue : `GCURSOR (1,23)`**, soit en général `GCURSOR (6 × colonne + 1, 8 × ligne − 1)`.
+Le dessin reste entièrement dans la ligne au-dessus de la barre. On s'écarte de deux points de la
+ROM **en connaissance de cause** : son propre marqueur frôle le crochet, et ce qui passe inaperçu
+dans l'écran `MENU` se voit dans un menu que l'on vient d'écrire.
 
 ⛔ **Et c'est pourquoi le marqueur N'EST PAS dans `DWGL`.** Il y tenait en option (`tag` bit 1, les
 bits 1 à 6 étant ignorés par la ROM), mais le code pèse **~90 octets** — quatre appels `4Ah`, le

@@ -94,6 +94,7 @@ BASEXT/
 │   ├── BEXTTEST.BAS           les 15 mots-cles (XCONSOLE et XCLS le 2026-09-16, DWGL le 2026-10-14)
 │   ├── DWGLTEST.BAS           DWGL : trace, les deux bits du tag, le marqueur, les refus,
 │   │                          et un menu A DIX CHOIX (PF1-PF5 + la touche haut-bas)
+│   ├── DWGLTEST.BSA           le meme, tokenise -- produit par outils/bsa_basext.py
 │   ├── DWGLEMU.py             DWGL execute dans un interpreteur SC62015 (PC, pas la machine)
 │   ├── XCONTEST.BAS           XCONSOLE et XCLS : trois fenetres, puis les cinq refus
 │   ├── XSCROLL.BAS            defilement confine : ligne haute figee, puis haut et bas figes
@@ -103,7 +104,9 @@ BASEXT/
 │   ├── MODDIAG*.BAS           diagnostics de MOD (temoins de cadre)
 │   └── RESULT.TXT             un vidage releve sur machine
 ├── outils/
-│   └── extraire_tokens.py     lit la table des tokens dans rom83.bin
+│   ├── extraire_tokens.py     lit la table des tokens dans rom83.bin
+│   └── bsa_basext.py          .BAS -> .BSA pour un programme qui emploie NOS mots-cles
+│                              (Sharp Basic Converter ne connait que les 168 de la ROM)
 └── donnees/
     ├── tokens-rom83.csv       la table generee (168 mots-cles)
     └── tokens-rom83.md        la meme, en Markdown (reprise dans MODE-EMPLOI §2.4)
