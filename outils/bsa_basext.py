@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-r"""bsa_basext.py -- produit le .BSA d'un programme qui emploie les mots-cles de BASEXT.
+r"""bsa_basext.py -- .BAS <-> .BSA pour un programme qui emploie les mots-cles de BASEXT.
 
     python C:\Claude\BASEXT\outils\bsa_basext.py ..\essais\DWGLTEST.BAS
 
@@ -165,18 +165,81 @@ def echanger_tokens(octets, paires):
     return bytes(out), compte
 
 
+def vers_bas(src, sortie):
+    r""".BSA -> .BAS, le chemin INVERSE. Sans lui, « sharpbasic decompress » rend
+        les octets bruts d'un token qu'il ne connait pas -- « 70 ■╙0,3,0,"..." »
+        au lieu de « 70 DWGL 0,3,0,"..." ». Meme principe qu'a l'aller : on
+        remplace dans le .BSA chaque token de BASEXT par celui d'une doublure,
+        on laisse sharpbasic ecrire le listing, puis on redonne aux doublures
+        leur vrai nom. Verification : le .BAS obtenu, repasse a l'aller, doit
+        redonner le .BSA de depart OCTET POUR OCTET."""
+    brut = open(src, "rb").read()
+    presents = [m for m, t in BASEXT.items() if bytes([0xFE, t]) in brut]
+    if not presents:
+        print("aucun mot-cle de BASEXT dans ce .BSA : sharpbasic suffit")
+
+    tmp = os.path.join(os.environ.get("TEMP", "."), "_bsa_basext")
+    os.makedirs(tmp, exist_ok=True)
+
+    # un listing provisoire, seulement pour choisir des doublures absentes
+    prov = os.path.join(tmp, "provisoire.BAS")
+    decompresser(src, prov)
+    vu = open(prov, "rb").read().decode("latin-1")
+    libres = [(d, t) for d, t in doublures_possibles()
+              if not mots_presents(vu, [d]) and d not in BASEXT]
+    if len(libres) < len(presents):
+        erreur("pas assez de doublures absentes du programme")
+    couples = list(zip(sorted(presents, key=len, reverse=True), libres))
+
+    print("mots-cles de BASEXT trouves dans le .BSA, et leur doublure :")
+    for mot, (dbl, tdbl) in couples:
+        print("   FE %02X  %-9s  ->  %-10s FE %02X" % (BASEXT[mot], mot, dbl, tdbl))
+
+    double, _ = echanger_tokens(brut, [(BASEXT[m], t) for m, (_, t) in couples])
+    inter = os.path.join(tmp, "inter.BSA")
+    open(inter, "wb").write(double)
+    interbas = os.path.join(tmp, "inter.BAS")
+    decompresser(inter, interbas)
+    texte = open(interbas, "rb").read().decode("ascii")
+    rendu = substituer(texte, {d: m for m, (d, _) in couples})
+
+    # --- verification : le .BAS obtenu doit redonner le .BSA de depart --------
+    ctrl = os.path.join(tmp, "controle.BAS")
+    open(ctrl, "wb").write(substituer(rendu, {m: d for m, (d, _) in couples}).encode("ascii"))
+    ctrlbsa = os.path.join(tmp, "controle.BSA")
+    compresser(ctrl, ctrlbsa)
+    refait, _ = echanger_tokens(open(ctrlbsa, "rb").read(),
+                                [(t, BASEXT[m]) for m, (_, t) in couples])
+    if refait != brut:
+        erreur("le .BAS obtenu ne redonne pas le .BSA de depart")
+
+    open(sortie, "wb").write(rendu.encode("ascii"))
+    print("\nverifie : recompresse, le .BAS redonne le .BSA de depart, octet pour octet")
+    print("ecrit   : %s (%d lignes)" % (sortie, rendu.count("\r\n")))
+
+
 def main():
     global BASEXT
     if len(sys.argv) < 2:
-        erreur("usage : bsa_basext.py <fichier.BAS> [-o <sortie.BSA>]")
+        erreur("usage : bsa_basext.py <fichier.BAS|.BSA> [-o <sortie>]\n"
+               "        le sens est deduit du fichier : un .BSA commence par FFh")
     BASEXT = mots_de_basext()
     print("%d mots-cles lus dans src/BASEXT.ASM" % len(BASEXT))
     src = os.path.abspath(sys.argv[1])
-    sortie = None
+    # le sens se deduit du fichier, pas de son nom : un .BSA commence par FFh et
+    # porte 34h en octet 4 (Format-BASIC-tokenise-PC-E500S.md §1)
+    tete = open(src, "rb").read(5)
+    vers_le_bas = len(tete) >= 5 and tete[0] == 0xFF and tete[4] == 0x34
     if "-o" in sys.argv:
         sortie = os.path.abspath(sys.argv[sys.argv.index("-o") + 1])
     else:
-        sortie = os.path.splitext(src)[0] + ".BSA"
+        sortie = os.path.splitext(src)[0] + (".BAS" if vers_le_bas else ".BSA")
+    if os.path.abspath(sortie) == src:
+        erreur("la sortie ecraserait la source")
+
+    if vers_le_bas:
+        vers_bas(src, sortie)
+        return
 
     texte = open(src, "rb").read().decode("ascii")
     if texte.count("\n") != texte.count("\r\n"):

@@ -1051,11 +1051,15 @@ des BASIC Microsoft — est **refusé** par ce BASIC : il faut `CHR$ 34`. La for
 `IF INKEY$ ="" THEN …`. Ce qui est refusé, c'est le guillemet doublé **à l'intérieur** d'une
 chaîne non vide. Relevé par J.-F. Albouy le 2026-09-26, sur six lignes de programmes d'essai.
 
-### 9.4 Produire un `.BSA` d'un programme qui emploie vos mots-clés
+### 9.4 `.BAS` ⇄ `.BSA` pour un programme qui emploie vos mots-clés
 
 ```powershell
-python C:\Claude\BASEXT\outils\bsa_basext.py essais\DWGLTEST.BAS
+python C:\Claude\BASEXT\outils\bsa_basext.py essais\DWGLTEST.BAS   # -> .BSA
+python C:\Claude\BASEXT\outils\bsa_basext.py essais\DWGLTEST.BSA   # -> .BAS
 ```
+
+**Le sens se déduit du fichier**, pas de son nom : un `.BSA` commence par `FFh` et porte `34h`
+en octet 4.
 
 ⛔ **`Sharp Basic Converter` seul ne suffit pas**, mesuré le 2026-10-15 : il tokenise les 168
 mots-clés de la ROM et eux seuls, et laisse les vôtres **en clair**. Le `.BSA` serait refusé par la
@@ -1079,9 +1083,19 @@ fichier + 33 » (`Sharp Basic Converter/Format-BASIC-tokenise-PC-E500S.md` §3).
 résultat par aller-retour **binaire** : il repose les doublures, décompresse, recompresse, et exige
 les mêmes octets.
 
-✅ **Éprouvé contre la machine** : le `.BSA` de `BEXTTEST.BAS` produit ainsi est **identique à
-l'octet** (1440) à celui que le PC-E500S a écrit lui-même, les quinze mots-clés tokenisés, `DWGL`
-compris.
+⛔ **Le retour a exactement le même défaut, et la même parade.** `sharpbasic decompress` rend les
+**octets bruts** d'un token qu'il ne connaît pas — `70 ■╙0,3,0,"..."` au lieu de
+`70 DWGL 0,3,0,"..."`. L'outil fait donc le chemin inverse : il met les doublures **dans le
+`.BSA`**, laisse `sharpbasic` écrire le listing, puis rend aux doublures leur vrai nom. Et il
+vérifie de même : le `.BAS` obtenu, repassé à l'aller, doit redonner le `.BSA` de départ.
+
+✅ **Éprouvé contre la machine, dans les deux sens** :
+
+| Épreuve | Résultat |
+|---|---|
+| `BEXTTEST.BAS` → `.BSA` | **identique à l'octet** (1440) au `.BSA` que le PC-E500S a écrit lui-même, les quinze mots-clés tokenisés, `DWGL` compris |
+| le `.BSA` **de la machine** → `.BAS` | **identique à l'octet** à `essais/BEXTTEST.BAS` |
+| `DRVTEST.BAS` (aucun mot-clé de BASEXT) → `.BSA` | identique à l'octet au `.BSA` de la machine : l'outil ne gêne pas les programmes ordinaires |
 
 ✅ **Et la machine sait relire ses propres noms** : un `SAVE` texte depuis le Sharp rend
 `DWGL`, `XCONSOLE`, `XCLS` **écrits en toutes lettres**, bien qu'ils soient absents de la table des

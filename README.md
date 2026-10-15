@@ -105,7 +105,7 @@ BASEXT/
 │   └── RESULT.TXT             un vidage releve sur machine
 ├── outils/
 │   ├── extraire_tokens.py     lit la table des tokens dans rom83.bin
-│   └── bsa_basext.py          .BAS -> .BSA pour un programme qui emploie NOS mots-cles
+│   └── bsa_basext.py          .BAS <-> .BSA pour un programme qui emploie NOS mots-cles
 │                              (Sharp Basic Converter ne connait que les 168 de la ROM)
 └── donnees/
     ├── tokens-rom83.csv       la table generee (168 mots-cles)
