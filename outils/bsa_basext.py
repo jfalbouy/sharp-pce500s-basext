@@ -1,50 +1,60 @@
 #!/usr/bin/env python3
 r"""bsa_basext.py -- .BAS <-> .BSA pour un programme qui emploie les mots-cles de BASEXT.
 
-    python C:\Claude\BASEXT\outils\bsa_basext.py ..\essais\DWGLTEST.BAS
+    python C:\Claude\BASEXT\outils\bsa_basext.py ..\essais\DWGLTEST.BAS     # -> .BSA
+    python C:\Claude\BASEXT\outils\bsa_basext.py ..\essais\DWGLTEST.BSA     # -> .BAS
+    python C:\Claude\BASEXT\outils\bsa_basext.py --table                    # la table seule
 
-⛔ POURQUOI CET OUTIL EXISTE. « Sharp Basic Converter » tokenise les 168 mots-cles
-   de la ROM, et eux seuls : mesure du 2026-10-15, il laisse DWGL, XCONSOLE, XCLS
-   et SREPT$ EN CLAIR dans le .BSA. Un tel fichier ne marche pas sur la machine --
-   l'interpreteur y lirait des noms de variables. C'etait le point ouvert n. 10 du
-   MODE-EMPLOI, et la reponse est donc : non, il ne les accepte pas.
+✅ DEPUIS LE 2026-10-15, « Sharp Basic Converter » CONNAIT LES EXTENSIONS : son option
+   -k/--keywords <table.csv> ajoute aux 168 mots-cles de la ROM ceux d'un module
+   (branche « mots-cles-extension », Publish\sharpbasic.exe). Verifie contre
+   BEXTTEST.BSA, enregistre par le PC-E500S BASEXT installe : identique A L'OCTET
+   dans les deux sens. Cet outil n'est donc plus qu'un AIGUILLAGE :
 
-✅ CE QU'IL SAIT FAIRE, LUI. Le convertisseur reste employe tel quel -- il a ete
-   verifie identique A L'OCTET au .BSA produit par le Sharp lui-meme (DRVTEST.BSA,
-   1131 octets, pointeurs de saut compris). On ne touche donc pas a sa sortie : on
-   lui donne, a la place de chaque mot-cle de BASEXT, un mot-cle de la ROM ABSENT
-   du programme -- une DOUBLURE --, puis on remplace dans le .BSA l'octet de token
-   de la doublure par celui de BASEXT.
+   1. il lit les mots-cles dans src/BASEXT.ASM (les equ des tokens et la kw_table),
+      jamais recopies : un seizieme mot-cle y est connu d'office ;
+   2. il en ecrit la table, donnees/tokens-basext.csv, au format de
+      Codes_BASIC_PC-E500S.csv -- c'est elle qu'on donne a « sharpbasic -k » ;
+   3. il appelle sharpbasic, en CP437 dans les deux sens (aucun octet ne bouge) ;
+   4. il VERIFIE par aller-retour binaire, comme avant.
 
-   La doublure et le mot-cle vrai pesant tous deux « FEh + 1 octet », AUCUNE
-   longueur ne change : ni celle des lignes, ni les POINTEURS DE SAUT, qui valent
-   « offset dans le fichier + 33 » (Format-BASIC-tokenise-PC-E500S.md §3). C'est
-   toute l'astuce, et c'est ce qui rend l'operation sure.
+   ⛔ Avant cette option, l'outil passait par des DOUBLURES : chaque mot-cle de
+   BASEXT remplace par une fonction de la ROM absente du programme, puis l'octet de
+   token corrige dans le .BSA. Ce procede, eprouve lui aussi contre la machine, est
+   dans l'historique git (commit 9681dc3) ; il n'a plus de raison d'etre.
 
-   La substitution de texte ne touche ni l'interieur des chaines, ni ce qui suit
-   un REM : « 10 REM DWGLTEST ... » doit rester tel quel.
-
-   Le resultat est VERIFIE par aller-retour : on repose les doublures dans le .BSA
-   produit, on le decompresse, on redonne leurs noms aux mots-cles, et on compare
-   au .BAS de depart. Octet pour octet.
+   Le convertisseur reproduit en outre deux regles de la machine (MODE-EMPLOI §1.2,
+   §11) : la ROM est consultee AVANT l'extension, et une seule extension a la fois.
+   Une table qui violerait l'une d'elles est refusee par sharpbasic lui-meme.
 """
 import os
 import re
 import subprocess
 import sys
+import tempfile
 
-SHARPBASIC = r"C:\Claude\Sharp Basic Converter\Publish\sharpbasic.exe"
+ICI = os.path.dirname(os.path.abspath(__file__))
+ASM = os.path.join(ICI, "..", "src", "BASEXT.ASM")
+TABLE = os.path.normpath(os.path.join(ICI, "..", "donnees", "tokens-basext.csv"))
 
-BASEXT = {}          # rempli par mots_de_basext(), au demarrage
-ASM = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                   "..", "src", "BASEXT.ASM")
+# L'executable : la variable SHARPBASIC s'il y en a une, sinon le premier de ces
+# chemins qui connait --keywords. L'executable de « main » ne le connait pas tant
+# que la branche n'y est pas fusionnee ; il est essaye, puis ecarte.
+CANDIDATS = [
+    r"C:\Claude\Sharp Basic Converter - extensions\Publish\sharpbasic.exe",
+    r"C:\Claude\Sharp Basic Converter\Publish\sharpbasic.exe",
+    r"C:\sharp\SharpBasicConverter\sharpbasic.exe",
+]
+
+
+def erreur(m):
+    print("ERREUR : " + m)
+    sys.exit(1)
 
 
 def mots_de_basext():
-    r"""Les mots-cles et leurs tokens, LUS DANS src/BASEXT.ASM -- jamais recopies
-        ici. Un seizieme mot-cle ajoute la-bas est donc connu d'office, et un
-        token change ne peut pas laisser cet outil en arriere. On lit les deux
-        choses qui le definissent :
+    r"""Les mots-cles et leurs tokens, LUS DANS src/BASEXT.ASM. On lit les deux
+        choses qui les definissent :
            tk_dw:    equ   0D3H
            db      4,'DWGL',tk_dw        (dans kw_table)"""
     src = open(ASM, encoding="utf-8").read()
@@ -60,250 +70,128 @@ def mots_de_basext():
         erreur("BASEXT.ASM : kw_table illisible")
     return table
 
-CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                   "..", "donnees", "tokens-rom83.csv")
+
+def ecrire_table(mots):
+    """donnees/tokens-basext.csv, au format de Codes_BASIC_PC-E500S.csv. Reecrite
+       seulement si elle change, pour ne pas toucher sa date sans raison."""
+    lignes = ["Code Hexa,Code Décimal,Instruction,Description"]
+    for nom, code in sorted(mots.items(), key=lambda kv: kv[1]):
+        lignes.append("0x%02X,%d,%s,BASEXT" % (code, code, nom))
+    texte = "\r\n".join(lignes) + "\r\n"
+    ancien = open(TABLE, encoding="utf-8", newline="").read() if os.path.exists(TABLE) else None
+    if texte != ancien:
+        with open(TABLE, "w", encoding="utf-8", newline="") as f:
+            f.write(texte)
+        print("table   : %s (%d mots-cles) -- %s" % (TABLE, len(mots),
+              "creee" if ancien is None else "MISE A JOUR"))
+    else:
+        print("table   : %s (%d mots-cles)" % (TABLE, len(mots)))
 
 
-def doublures_possibles():
-    """les FONCTIONS de la ROM, lues dans la table generee. Pourquoi des
-       fonctions : une doublure ne doit JAMAIS introduire une reference de ligne
-       (GOTO, THEN, ELSE...), que le convertisseur resout en POINTEUR -- cela
-       changerait la longueur. Aucune fonction n'en introduit."""
-    pool = []
-    for ligne in open(CSV, encoding="utf-8").read().split("\n")[1:]:
-        ch = ligne.split(",")
-        if len(ch) < 3 or ch[2] != "fonction":
+def trouver_sharpbasic():
+    candidats = ([os.environ["SHARPBASIC"]] if os.environ.get("SHARPBASIC") else []) + CANDIDATS
+    for exe in candidats:
+        if not os.path.exists(exe):
             continue
-        nom, code = ch[1], int(ch[0], 16)
-        if re.fullmatch(r"[A-Z]+\$?", nom):
-            pool.append((nom, code))
-    return pool
+        r = subprocess.run([exe, "--help"], capture_output=True, text=True, errors="replace")
+        if "--keywords" in r.stdout:
+            return exe
+    erreur("aucun sharpbasic ne connait --keywords. Chemins essayes :\n   "
+           + "\n   ".join(candidats)
+           + "\nPublier la branche « mots-cles-extension » de Sharp Basic Converter"
+             " (deploy.ps1 -NoCopy), ou designer l'executable par la variable SHARPBASIC.")
 
 
-def erreur(m):
-    print("ERREUR : " + m)
-    sys.exit(1)
+def sharpbasic(exe, *args):
+    r = subprocess.run([exe, *args, "-k", TABLE, "-f"],
+                       capture_output=True, text=True, errors="replace")
+    if r.returncode:
+        erreur("sharpbasic %s :\n%s%s" % (args[0], r.stdout, r.stderr))
+    # un FE xx inconnu malgre la table : un token que BASEXT.ASM ne declare pas
+    if "tokens inconnus" in r.stderr:
+        erreur("sharpbasic %s :\n%s" % (args[0], r.stderr))
+    return r.stdout
 
 
-def mots_presents(texte, mots):
-    """les mots de la liste qui apparaissent dans le texte, bornes de mot"""
+def compresser(exe, bas, bsa):
+    sharpbasic(exe, "compress", bas, "-o", bsa, "--input-encoding", "cp437")
+
+
+def decompresser(exe, bsa, bas):
+    sharpbasic(exe, "decompress", bsa, "-o", bas, "--output-encoding", "cp437")
+
+
+def annoncer(mots, bsa):
+    """les mots-cles de BASEXT effectivement TOKENISES, comptes dans le .BSA : un
+       nom cite dans un REM ou une chaine n'y figure pas, et ne doit pas y figurer"""
     vus = []
-    for m in mots:
-        if re.search(r"(?<![A-Z0-9$])" + re.escape(m) + r"(?![A-Z0-9$])", texte):
-            vus.append(m)
-    return vus
-
-
-def substituer(texte, table):
-    """remplace les cles de la table par leur valeur, HORS chaines et HORS REM.
-       table : {nom -> remplacement}. Plus long d'abord (XCONSOLE avant XCLS)."""
-    noms = sorted(table, key=len, reverse=True)
-    sortie = []
-    for ligne in texte.split("\r\n"):
-        i, n, hors = 0, len(ligne), []
-        chaine = False
-        while i < n:
-            c = ligne[i]
-            if c == '"':
-                chaine = not chaine
-                hors.append(c)
-                i += 1
-                continue
-            if not chaine:
-                # REM : tout le reste de la ligne est litteral
-                if ligne.startswith("REM", i) and (i == 0 or not ligne[i - 1].isalnum()):
-                    hors.append(ligne[i:])
-                    break
-                pris = None
-                for m in noms:
-                    if ligne.startswith(m, i):
-                        apres = ligne[i + len(m):i + len(m) + 1]
-                        avant = ligne[i - 1:i]
-                        if not (apres and (apres.isalnum() or apres == "$")) and \
-                           not (avant and (avant.isalnum() or avant == "$")):
-                            pris = m
-                            break
-                if pris:
-                    hors.append(table[pris])
-                    i += len(pris)
-                    continue
-            hors.append(c)
-            i += 1
-        sortie.append("".join(hors))
-    return "\r\n".join(sortie)
-
-
-def compresser(bas, bsa):
-    r = subprocess.run([SHARPBASIC, "compress", bas, "-o", bsa, "-f"],
-                       capture_output=True, text=True, errors="replace")
-    if r.returncode or not os.path.exists(bsa):
-        erreur("sharpbasic compress :\n" + r.stdout + r.stderr)
-
-
-def decompresser(bsa, bas):
-    r = subprocess.run([SHARPBASIC, "decompress", bsa, "-o", bas, "-f"],
-                       capture_output=True, text=True, errors="replace")
-    if r.returncode or not os.path.exists(bas):
-        erreur("sharpbasic decompress :\n" + r.stdout + r.stderr)
-
-
-def echanger_tokens(octets, paires):
-    """remplace les FE <a> par FE <b> ; rend aussi le compte par paire"""
-    out = bytearray(octets)
-    compte = {}
-    i = 0
-    while i < len(out) - 1:
-        if out[i] == 0xFE:
-            for a, b in paires:
-                if out[i + 1] == a:
-                    out[i + 1] = b
-                    compte[(a, b)] = compte.get((a, b), 0) + 1
-                    break
-            i += 2
-        else:
-            i += 1
-    return bytes(out), compte
-
-
-def vers_bas(src, sortie):
-    r""".BSA -> .BAS, le chemin INVERSE. Sans lui, « sharpbasic decompress » rend
-        les octets bruts d'un token qu'il ne connait pas -- « 70 ■╙0,3,0,"..." »
-        au lieu de « 70 DWGL 0,3,0,"..." ». Meme principe qu'a l'aller : on
-        remplace dans le .BSA chaque token de BASEXT par celui d'une doublure,
-        on laisse sharpbasic ecrire le listing, puis on redonne aux doublures
-        leur vrai nom. Verification : le .BAS obtenu, repasse a l'aller, doit
-        redonner le .BSA de depart OCTET POUR OCTET."""
-    brut = open(src, "rb").read()
-    presents = [m for m, t in BASEXT.items() if bytes([0xFE, t]) in brut]
-    if not presents:
-        print("aucun mot-cle de BASEXT dans ce .BSA : sharpbasic suffit")
-
-    tmp = os.path.join(os.environ.get("TEMP", "."), "_bsa_basext")
-    os.makedirs(tmp, exist_ok=True)
-
-    # un listing provisoire, seulement pour choisir des doublures absentes
-    prov = os.path.join(tmp, "provisoire.BAS")
-    decompresser(src, prov)
-    vu = open(prov, "rb").read().decode("latin-1")
-    libres = [(d, t) for d, t in doublures_possibles()
-              if not mots_presents(vu, [d]) and d not in BASEXT]
-    if len(libres) < len(presents):
-        erreur("pas assez de doublures absentes du programme")
-    couples = list(zip(sorted(presents, key=len, reverse=True), libres))
-
-    print("mots-cles de BASEXT trouves dans le .BSA, et leur doublure :")
-    for mot, (dbl, tdbl) in couples:
-        print("   FE %02X  %-9s  ->  %-10s FE %02X" % (BASEXT[mot], mot, dbl, tdbl))
-
-    double, _ = echanger_tokens(brut, [(BASEXT[m], t) for m, (_, t) in couples])
-    inter = os.path.join(tmp, "inter.BSA")
-    open(inter, "wb").write(double)
-    interbas = os.path.join(tmp, "inter.BAS")
-    decompresser(inter, interbas)
-    texte = open(interbas, "rb").read().decode("ascii")
-    rendu = substituer(texte, {d: m for m, (d, _) in couples})
-
-    # --- verification : le .BAS obtenu doit redonner le .BSA de depart --------
-    ctrl = os.path.join(tmp, "controle.BAS")
-    open(ctrl, "wb").write(substituer(rendu, {m: d for m, (d, _) in couples}).encode("ascii"))
-    ctrlbsa = os.path.join(tmp, "controle.BSA")
-    compresser(ctrl, ctrlbsa)
-    refait, _ = echanger_tokens(open(ctrlbsa, "rb").read(),
-                                [(t, BASEXT[m]) for m, (_, t) in couples])
-    if refait != brut:
-        erreur("le .BAS obtenu ne redonne pas le .BSA de depart")
-
-    open(sortie, "wb").write(rendu.encode("ascii"))
-    print("\nverifie : recompresse, le .BAS redonne le .BSA de depart, octet pour octet")
-    print("ecrit   : %s (%d lignes)" % (sortie, rendu.count("\r\n")))
+    for m, t in sorted(mots.items(), key=lambda kv: kv[1]):
+        n = bsa.count(bytes([0xFE, t]))
+        if n:
+            vus.append("%s x%d" % (m, n) if n > 1 else m)
+    print("tokens  : %s" % (" ".join(vus) if vus else "aucun mot-cle de BASEXT"))
 
 
 def main():
-    global BASEXT
-    if len(sys.argv) < 2:
+    args = sys.argv[1:]
+    mots = mots_de_basext()
+    print("%d mots-cles lus dans src/BASEXT.ASM" % len(mots))
+    ecrire_table(mots)
+    if args == ["--table"]:
+        return
+    if not args or args[0].startswith("-"):
         erreur("usage : bsa_basext.py <fichier.BAS|.BSA> [-o <sortie>]\n"
+               "        bsa_basext.py --table      (la table seule)\n"
                "        le sens est deduit du fichier : un .BSA commence par FFh")
-    BASEXT = mots_de_basext()
-    print("%d mots-cles lus dans src/BASEXT.ASM" % len(BASEXT))
-    src = os.path.abspath(sys.argv[1])
+
+    exe = trouver_sharpbasic()
+    print("outil   : %s" % exe)
+
+    src = os.path.abspath(args[0])
     # le sens se deduit du fichier, pas de son nom : un .BSA commence par FFh et
     # porte 34h en octet 4 (Format-BASIC-tokenise-PC-E500S.md §1)
-    tete = open(src, "rb").read(5)
-    vers_le_bas = len(tete) >= 5 and tete[0] == 0xFF and tete[4] == 0x34
-    if "-o" in sys.argv:
-        sortie = os.path.abspath(sys.argv[sys.argv.index("-o") + 1])
+    brut = open(src, "rb").read()
+    vers_le_bas = len(brut) >= 5 and brut[0] == 0xFF and brut[4] == 0x34
+    if "-o" in args:
+        sortie = os.path.abspath(args[args.index("-o") + 1])
     else:
         sortie = os.path.splitext(src)[0] + (".BAS" if vers_le_bas else ".BSA")
     if os.path.abspath(sortie) == src:
         erreur("la sortie ecraserait la source")
 
-    if vers_le_bas:
-        vers_bas(src, sortie)
-        return
-
-    texte = open(src, "rb").read().decode("ascii")
-    if texte.count("\n") != texte.count("\r\n"):
+    if not vers_le_bas and brut.count(b"\n") != brut.count(b"\r\n"):
         erreur("le .BAS doit etre en CRLF (voir MODE-EMPLOI §9.3)")
 
-    # quels mots-cles de BASEXT le programme emploie-t-il ?
-    employes = mots_presents(texte, BASEXT)
-    if not employes:
-        print("aucun mot-cle de BASEXT : sharpbasic suffit, rien a faire ici")
-    # une doublure par mot-cle, et elle doit etre ABSENTE du programme
-    libres = [(d, t) for d, t in doublures_possibles()
-              if not mots_presents(texte, [d]) and d not in BASEXT]
-    if len(libres) < len(employes):
-        erreur("pas assez de doublures absentes du programme")
-    couples = list(zip(sorted(employes, key=len, reverse=True), libres))
+    with tempfile.TemporaryDirectory(prefix="bsa_basext_") as tmp:
+        if vers_le_bas:
+            annoncer(mots, brut)
+            decompresser(exe, src, sortie)
+            # le .BAS obtenu, repasse a l'aller, doit redonner le .BSA de depart
+            controle = os.path.join(tmp, "controle.BSA")
+            compresser(exe, sortie, controle)
+            if open(controle, "rb").read() != brut:
+                erreur("le .BAS obtenu ne redonne pas le .BSA de depart")
+            print("\nverifie : recompresse, le .BAS redonne le .BSA de depart, octet pour octet")
+            print("ecrit   : %s (%d lignes)" % (sortie, open(sortie, "rb").read().count(b"\r\n")))
+            return
 
-    print("mots-cles de BASEXT employes, et leur doublure :")
-    for mot, (dbl, tdbl) in couples:
-        print("   %-9s FE %02X   <-  %-10s FE %02X" % (mot, BASEXT[mot], dbl, tdbl))
+        compresser(exe, src, sortie)
+        final = open(sortie, "rb").read()
+        annoncer(mots, final)
+        # aller-retour binaire : decompresse puis recompresse, les memes octets.
+        # ⚠️ On ne compare PAS le listing relu au .BAS de depart : la mise en forme
+        #    canonique rend « ERN ; » la ou l'on ecrit « ERN; » -- un ecart d'AFFICHAGE
+        #    sans rapport avec les octets. On le montre, sans le reprocher.
+        relu, refait = os.path.join(tmp, "relu.BAS"), os.path.join(tmp, "refait.BSA")
+        decompresser(exe, sortie, relu)
+        compresser(exe, relu, refait)
+        if open(refait, "rb").read() != final:
+            erreur("aller-retour binaire : la recompression ne redonne pas les memes octets")
+        for n, (a, b) in enumerate(zip(brut.split(b"\r\n"), open(relu, "rb").read().split(b"\r\n")), 1):
+            if a != b:
+                print("   mise en forme, ligne %d : [%s] rendu [%s]"
+                      % (n, a.decode("cp437"), b.decode("cp437")))
 
-    tmp = os.path.join(os.environ.get("TEMP", "."), "_bsa_basext")
-    os.makedirs(tmp, exist_ok=True)
-    doublé = os.path.join(tmp, os.path.basename(src))
-    open(doublé, "wb").write(
-        substituer(texte, {m: d for m, (d, _) in couples}).encode("ascii"))
-
-    inter = os.path.join(tmp, "inter.BSA")
-    compresser(doublé, inter)
-    brut = open(inter, "rb").read()
-
-    # les noms de BASEXT ne doivent plus trainer en clair HORS des REM :
-    # on ne peut pas le verifier simplement, l'aller-retour ci-dessous le fera.
-    final, compte = echanger_tokens(brut, [(t, BASEXT[m]) for m, (_, t) in couples])
-    for mot, (dbl, tdbl) in couples:
-        n = compte.get((tdbl, BASEXT[mot]), 0)
-        if n == 0:
-            erreur("la doublure %s n'a produit aucun token : %s n'a pas ete tokenise"
-                   % (dbl, mot))
-        print("   %-9s : %d token(s) remis en place" % (mot, n))
-
-    # --- verification par aller-retour -------------------------------------
-    retour, _ = echanger_tokens(final, [(BASEXT[m], t) for m, (_, t) in couples])
-    if retour != brut:
-        erreur("l'echange de tokens n'est pas reversible")
-    rt = os.path.join(tmp, "retour.BSA")
-    open(rt, "wb").write(retour)
-    rtbas = os.path.join(tmp, "retour.BAS")
-    decompresser(rt, rtbas)
-    # ⚠️ on NE compare PAS le listing relu au .BAS de depart : le convertisseur a
-    #    sa mise en forme canonique (il rend « ERN ; » la ou l'on ecrit « ERN; »),
-    #    et cet ecart d'AFFICHAGE n'a rien a voir avec les octets. On recompresse
-    #    donc, et on exige l'identite BINAIRE.
-    rtbsa = os.path.join(tmp, "retour2.BSA")
-    compresser(rtbas, rtbsa)
-    if open(rtbsa, "rb").read() != brut:
-        erreur("aller-retour binaire : la recompression ne redonne pas les memes octets")
-    relu = open(rtbas, "rb").read().decode("ascii")
-    rendu = substituer(relu, {d: m for m, (d, _) in couples})
-    ecarts = [(i + 1, a, b) for i, (a, b) in
-              enumerate(zip(texte.split("\r\n"), rendu.split("\r\n"))) if a != b]
-    for n, a, b in ecarts:
-        print("   mise en forme, ligne %d : [%s] rendu [%s]" % (n, a, b))
-
-    open(sortie, "wb").write(final)
     taille = int.from_bytes(final[7:9], "little")
     print("\nverifie : aller-retour binaire -- decompresse puis recompresse,")
     print("          les memes octets reviennent")

@@ -105,10 +105,13 @@ BASEXT/
 │   └── RESULT.TXT             un vidage releve sur machine
 ├── outils/
 │   ├── extraire_tokens.py     lit la table des tokens dans rom83.bin
-│   └── bsa_basext.py          .BAS <-> .BSA pour un programme qui emploie NOS mots-cles
-│                              (Sharp Basic Converter ne connait que les 168 de la ROM)
+│   └── bsa_basext.py          .BAS <-> .BSA pour un programme qui emploie NOS mots-cles :
+│                              ecrit donnees/tokens-basext.csv et appelle
+│                              « sharpbasic -k » (MODE-EMPLOI §9.4)
 └── donnees/
     ├── tokens-rom83.csv       la table generee (168 mots-cles)
+    ├── tokens-basext.csv      NOS 15 mots-cles, generes depuis src/BASEXT.ASM
+    │                          par bsa_basext.py -- la table de « sharpbasic -k »
     └── tokens-rom83.md        la meme, en Markdown (reprise dans MODE-EMPLOI §2.4)
 ```
 
@@ -143,10 +146,12 @@ python C:\Claude\BASEXT\outils\extraire_tokens.py
   module changent à chaque assemblage.
 - **`pce500.inc` est généré** (`xasm2026-4/tools/generate_pce500_inc.py`, depuis les carnets du
   désassembleur) : le corriger à la source, puis recopier.
-- **La table des tokens se régénère**, elle ne s'édite pas.
+- **Les tables des tokens se régénèrent**, elles ne s'éditent pas : `tokens-rom83.csv` par
+  `extraire_tokens.py`, `tokens-basext.csv` par `bsa_basext.py --table`.
 - **Fichiers `.BAS` destinés à la machine** : CRLF et MAJUSCULES ASCII.
 - **Tout ajout de mot-clé** : vérifier le nom et le token (`MODE-EMPLOI.md` §2), puis mettre à jour
-  le tableau ci-dessus, `BEXTTEST.BAS` et le journal.
+  le tableau ci-dessus, `BEXTTEST.BAS` et le journal, et régénérer `donnees/tokens-basext.csv`
+  (`bsa_basext.py --table`). `sharpbasic -k` refusera la table si le nom ou le code est fautif.
 - **`src/BASEXT.ASM` est aussi inclus par `C:\Claude\BASEXT-DRV`**, qui en fait un pilote
   résident de `S1:` (2026-09-16). Le pilote pose `def basext_pilote`, ce qui masque l'include de
   `pce500.inc`, l'`org` et le `pre_on` du module. Tout ajout doit donc rester **relogeable** : pas

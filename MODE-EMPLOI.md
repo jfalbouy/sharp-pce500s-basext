@@ -47,7 +47,7 @@ manière de rendre la main au BASIC.
 
 | # | Étape | Contrôle | § |
 |---|---|---|---|
-| 1 | **Choisir le nom** | il ne doit ni **commencer** par un mot-clé existant, ni en être le **début** (`PEEKX` est coupé en `PEEK` + `X`) | 2, 10 |
+| 1 | **Choisir le nom** | il ne doit ni **commencer** par un mot-clé existant, ni en être le **début** (`PEEKX` est coupé en `PEEK` + `X`) ; `sharpbasic -k` refuse un tel nom | 2, 10, 9.4 |
 | 2 | **Choisir un token libre** | parmi les 86 du §2.3, jamais `00h` ; de préférence un token déjà éprouvé | 2.3 |
 | 3 | **Décider la nature** | *instruction* (drapeau `080h`, routine à l'adresse) ou *fonction* (drapeau `040h`, routine à l'adresse **+ 3**) | 1.3 |
 | 4 | **Choisir la syntaxe à imiter** | sans parenthèses comme `PEEK` → `chknum` ; liste parenthésée comme `POINT` → `eval` ; liste à virgules comme `POKE` | 5.1 |
@@ -1056,50 +1056,79 @@ chaîne non vide. Relevé par J.-F. Albouy le 2026-09-26, sur six lignes de prog
 ```powershell
 python C:\Claude\BASEXT\outils\bsa_basext.py essais\DWGLTEST.BAS   # -> .BSA
 python C:\Claude\BASEXT\outils\bsa_basext.py essais\DWGLTEST.BSA   # -> .BAS
+python C:\Claude\BASEXT\outils\bsa_basext.py --table                # la table seule
 ```
 
 **Le sens se déduit du fichier**, pas de son nom : un `.BSA` commence par `FFh` et porte `34h`
 en octet 4.
 
-⛔ **`Sharp Basic Converter` seul ne suffit pas**, mesuré le 2026-10-15 : il tokenise les 168
-mots-clés de la ROM et eux seuls, et laisse les vôtres **en clair**. Le `.BSA` serait refusé par la
-machine, qui y lirait des noms de variables.
+✅ **`Sharp Basic Converter` connaît les extensions depuis le 2026-10-15** : son option
+`-k`/`--keywords <table.csv>` ajoute aux 168 mots-clés de la ROM ceux d'un module. Elle est sur la
+branche `mots-cles-extension`, publiée dans
+`C:\Claude\Sharp Basic Converter - extensions\Publish\sharpbasic.exe` (pas encore fusionnée
+dans `main`). On peut l'appeler directement :
 
-✅ **Mais il ne faut pas le remplacer pour autant** : son `.BSA` est **identique à l'octet** à celui
-que le Sharp produit lui-même (`DRVTEST.BSA`, 1131 octets, pointeurs de saut compris). `bsa_basext.py`
-s'en sert donc tel quel et ne corrige qu'un octet par mot-clé :
+```powershell
+sharpbasic compress   essais\DWGLTEST.BAS -k donnees\tokens-basext.csv --input-encoding cp437
+sharpbasic decompress essais\DWGLTEST.BSA -k donnees\tokens-basext.csv --output-encoding cp437
+```
+
+`bsa_basext.py` n'est donc plus qu'un **aiguillage** :
 
 1. la liste des mots-clés est **lue dans `src/BASEXT.ASM`** (les `equ` des tokens et la
    `kw_table`), jamais recopiée : un seizième mot-clé y sera connu d'office ;
-2. chaque mot-clé est remplacé, **hors chaînes et hors `REM`**, par une **doublure** — une
-   **fonction** de la ROM absente du programme (jamais une instruction de saut : `GOTO`,
-   `THEN`… feraient résoudre un **pointeur**) ;
-3. `sharpbasic compress` fait tout le travail ;
-4. dans le `.BSA`, l'octet de token de la doublure est remis à sa vraie valeur.
+2. il en écrit la table **`donnees/tokens-basext.csv`**, au format de
+   `Codes_BASIC_PC-E500S.csv`, et ne la réécrit que si elle change. **Ce dossier en détient la
+   copie de référence** ; le convertisseur en garde un témoin pour ses tests ;
+3. il appelle `sharpbasic -k`, en **CP437 dans les deux sens** : aucun octet ne bouge ;
+4. il **vérifie par aller-retour binaire**, comme avant. À l'aller, il décompresse le `.BSA`
+   produit, le recompresse et exige les mêmes octets. Au retour, le `.BAS` obtenu, recompressé,
+   doit redonner le `.BSA` de départ.
 
-**Pourquoi c'est sûr** : doublure et mot-clé pèsent tous deux `FEh` + 1 octet, donc **aucune
-longueur ne bouge** — ni celle des lignes, ni les **pointeurs de saut**, qui valent « offset dans le
-fichier + 33 » (`Sharp Basic Converter/Format-BASIC-tokenise-PC-E500S.md` §3). L'outil vérifie son
-résultat par aller-retour **binaire** : il repose les doublures, décompresse, recompresse, et exige
-les mêmes octets.
+Il annonce les mots-clés **effectivement tokenisés**, comptés dans le `.BSA` : un nom cité dans
+un `REM` (« LE MODELE » ne contient pas `MOD`) n'y figure pas, et ne doit pas y figurer. Il
+cherche l'exécutable dans la variable `SHARPBASIC`, puis dans la branche, puis dans `main` et le
+dossier d'usage, et retient le premier qui connaît `--keywords`.
 
-⛔ **Le retour a exactement le même défaut, et la même parade.** `sharpbasic decompress` rend les
-**octets bruts** d'un token qu'il ne connaît pas — `70 ■╙0,3,0,"..."` au lieu de
-`70 DWGL 0,3,0,"..."`. L'outil fait donc le chemin inverse : il met les doublures **dans le
-`.BSA`**, laisse `sharpbasic` écrire le listing, puis rend aux doublures leur vrai nom. Et il
-vérifie de même : le `.BAS` obtenu, repassé à l'aller, doit redonner le `.BSA` de départ.
+**Le convertisseur reproduit les règles de la machine**, et refuse une table qui les violerait,
+toutes fautes listées ensemble :
 
-✅ **Éprouvé contre la machine, dans les deux sens** :
+| Règle | Source |
+|---|---|
+| la table de la ROM est consultée **avant** celle de l'extension, donc un nom qui commence par un mot-clé de la ROM est refusé comme **inaccessible** (`PEEKX` serait lu `PEEK X`) | §1.2 |
+| **une seule** extension à la fois | §11 |
+| codes refusés : `00h` (fin de la répartition), `38h` et `A6h` (routine sans nom), `1Eh` `1Fh` `FEh` `FFh` (non éprouvés) | §2.3 |
+| code ou nom déjà pris, nom hors de la forme `LETTRE [LETTRES|CHIFFRES] [$]` | — |
+
+⚠️ **Les noms de variables, aussi** : avec l'extension chargée, `MODE` se tokenise en `MOD E`,
+comme sur la machine quand BASEXT est installé. `sharpbasic inspect PROG.BAS -k …` signale ces
+noms. Sur 65 programmes réels, deux sont touchés (`MODE`, `MOD3$`).
+
+⚠️ **Sans la table**, un `.BSA` enregistré avec BASEXT installé se décompile encore, mais ses
+mots-clés ressortent en octets bruts (`70 ■╙0,3,0,"..."`). `sharpbasic decompress` le
+**signale** désormais et suggère `--keywords`.
+
+✅ **Éprouvé contre la machine, dans les deux sens** (2026-10-15, avec la nouvelle version) :
 
 | Épreuve | Résultat |
 |---|---|
 | `BEXTTEST.BAS` → `.BSA` | **identique à l'octet** (1440) au `.BSA` que le PC-E500S a écrit lui-même, les quinze mots-clés tokenisés, `DWGL` compris |
 | le `.BSA` **de la machine** → `.BAS` | **identique à l'octet** à `essais/BEXTTEST.BAS` |
-| `DRVTEST.BAS` (aucun mot-clé de BASEXT) → `.BSA` | identique à l'octet au `.BSA` de la machine : l'outil ne gêne pas les programmes ordinaires |
+| `DRVTEST.BAS` (aucun mot-clé de BASEXT) → `.BSA` | identique à l'octet au `.BSA` de la machine : l'extension ne gêne pas les programmes ordinaires |
+| `DWGLTEST.BAS` → `.BSA` | identique à l'octet à `essais/DWGLTEST.BSA`, produit par l'ancienne méthode |
 
 ✅ **Et la machine sait relire ses propres noms** : un `SAVE` texte depuis le Sharp rend
 `DWGL`, `XCONSOLE`, `XCLS` **écrits en toutes lettres**, bien qu'ils soient absents de la table des
-noms de la ROM — le listing rendu par la machine est identique à notre `.BAS` de départ.
+noms de la ROM. Le listing rendu par la machine est identique à notre `.BAS` de départ.
+
+⛔ **L'ancienne méthode, les doublures** (2026-10-15, avant l'option ; commit `9681dc3`).
+Le convertisseur ne tokenisait que les 168 mots-clés de la ROM et laissait les nôtres **en
+clair**. `bsa_basext.py` remplaçait donc chaque mot-clé, hors chaînes et hors `REM`, par une
+**fonction** de la ROM absente du programme. Il laissait `sharpbasic` compresser, puis remettait
+l'octet de token à sa vraie valeur. C'était sûr parce que doublure et mot-clé pèsent tous deux
+`FEh` + 1 octet : aucune longueur ni aucun pointeur de saut (« offset + 33 ») ne bougeait. Le
+procédé a été éprouvé contre la machine avec les mêmes résultats que ci-dessus. Il n'a plus de
+raison d'être, mais il reste valable pour un convertisseur qui ignorerait les extensions.
 
 ### 9.5 Éprouver
 
@@ -1184,7 +1213,7 @@ Tous ont coûté au moins une séance.
 | 7 | Les tokens `1Eh`, `1Fh`, `FEh`, `FFh` | essai (§2.3) |
 | 8 | ✅ **Clos** — **quatre** arguments, trois nombres et une chaîne, écrits le 2026-10-14 pour `DWGL colonne,ligne,tag,chaine$` (§8.5) : chaque nombre par un **`eval` + `dec2bin`** encapsulés, la chaîne par un `eval` final, et la **ponctuation lue à la main** entre chacun. Il n'a pas fallu lire `MID$` : la difficulté supposée n'existe pas, dès lors que `BP` est rendu **en absolu** après chaque argument. ✅ Éprouvé sur PC-E500S le 2026-10-14 (`essais/DWGLTEST.BAS`) | — |
 | 9 | Le cadre de `STR$` (`0FD6CDh`) : `0FC13Ch` n'a pas été lu, le bilan de `BP` n'est donc pas établi pour ce chemin | lire `0FC13Ch` |
-| 10 | ✅ **Clos le 2026-10-15, et la réponse est non** : `Sharp Basic Converter` tokenise les 168 mots-clés de la ROM **et eux seuls** — il laisse `DWGL`, `XCONSOLE`, `XCLS`, `SREPT$` **en clair** dans le `.BSA`, que la machine lirait alors comme des noms de variables. Parade : **`outils/bsa_basext.py`** (§9.4) | — |
+| 10 | ✅ **Clos le 2026-10-15 — la réponse est désormais oui.** Le matin, la réponse était non : `Sharp Basic Converter` tokenisait les 168 mots-clés de la ROM **et eux seuls**, et laissait `DWGL`, `XCONSOLE`, `XCLS`, `SREPT$` **en clair** dans le `.BSA`. La parade était alors les doublures de `bsa_basext.py`. Le même jour, le convertisseur a reçu l'option **`-k`/`--keywords <table.csv>`** (branche `mots-cles-extension`). Elle reproduit à l'octet, dans les deux sens, le `BEXTTEST.BSA` enregistré par la machine. `bsa_basext.py` lui délègue désormais le travail et écrit la table `donnees/tokens-basext.csv` (§9.4) | fusionner la branche dans `main` du convertisseur |
 
 ---
 
