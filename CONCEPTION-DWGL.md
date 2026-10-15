@@ -1,6 +1,6 @@
 # DWGL — une instruction BASIC pour la barre de menu (IOCS 58h)
 
-*Rédigé le 2026-10-14 — mis à jour le 2026-10-14*
+*Rédigé le 2026-10-14 — mis à jour le 2026-10-15*
 
 Étude de faisabilité d'un mot-clé BASEXT qui trace la **barre de cases** du Sharp — celle de la
 touche `MENU` et des libellés de touches de fonction — depuis un programme BASIC, sans `POKE` ni
@@ -130,7 +130,46 @@ graphique de 4 octets** (`0A 1B 1B 0A`, en `0E229Dh`) posé par `SUB_E2285` (`(s
 rafraîchissement, quelle que soit la case choisie : c'est un indicateur, pas un pointeur de
 sélection. La même routine sert à deux autres écrans système (`0E1142h`, `0E1A0Ch`).
 
-Un programme peut le reproduire par `GCURSOR` + `GPRINT`, ou par la commande `4Ah` de l'affichage.
+✅ **Un programme le repose en UNE ligne de BASIC**, et l'arithmétique est lue dans la ROM, pas
+devinée :
+
+```basic
+GCURSOR (1,25):GPRINT "0A1B1B0A"
+```
+
+| Ce qu'il fallait savoir | Où c'est lu |
+|---|---|
+| `GCURSOR (x,y)` prend `y` au **bas** de la colonne de 8 points | `GPRINT` passe `y − 7` à la commande `4Ah` : `mv y,0FFFFF9h` / `add y,i` en `0FD3D7h` |
+| d'où **25** pour le sommet 18 de la ROM | `18 + 7` |
+| `GPRINT` met lui-même `dotsop` à **0** | `and [dotsop],000h` en `0FD350h` — la ROM, elle, emploie `1` pour le marqueur ; les deux s'affichent |
+| `x` avance d'un point par octet | `inc i` en `0FD3CBh` |
+
+**En général**, pour une barre tracée en (`colonne`, `ligne`) :
+`GCURSOR (6 × colonne + 1, 8 × ligne + 1)` — 6 points par colonne de caractère, et `8 × ligne + 1`
+redonne 25 pour la ligne 3.
+
+✅ **Fidèle au point près, vérifié en comparant les deux clichés** (l'écran `MENU` de la machine
+et notre tracé, mêmes 816 × 186 pixels, 2026-10-15). Les lignes de points sombres sont les
+**mêmes dans les deux images** :
+
+| | marqueur | barre |
+|---|---|---|
+| écran `MENU` | 114, 118, (vide), 126, 130 | 138 à 164 |
+| `GCURSOR (1,25):GPRINT` | 114, 118, (vide), 126, 130 | 138 à 164 |
+
+Soit, en points d'écran : fenêtre de huit points de 18 à 25, allumés en **18, 19, 21, 22** — le
+bit de poids faible est bien le point du **haut** —, puis **une seule ligne de points vide**
+(23) avant le haut du crochet (24). ⚠️ **Ce voisinage serré n'est pas un défaut de notre ligne :
+c'est l'espacement de la machine elle-même.** Qui le veut plus aéré descend l'ordonnée :
+`GCURSOR (1,23)` laisse trois lignes vides et reste dans la ligne 2.
+
+⛔ **Et c'est pourquoi le marqueur N'EST PAS dans `DWGL`.** Il y tenait en option (`tag` bit 1, les
+bits 1 à 6 étant ignorés par la ROM), mais le code pèse **~90 octets** — quatre appels `4Ah`, le
+calcul des deux coordonnées, la sauvegarde de `X` et `Y` autour de chaque appel — et le module
+autonome n'a plus que **61 octets** libres. Il aurait fallu soit le réserver au pilote (deux objets
+au comportement différent, ce que la source unique interdit par principe), soit descendre l'`org`
+du module et perdre `CALL &BF000`. Une ligne de BASIC coûte **zéro octet** et laisse le placement
+libre : le marqueur n'est pas une sortie de la `58h`, il n'a pas à être dans le mot-clé.
 
 ### L'autre jeu de libellés, celui des touches de fonction
 
@@ -270,9 +309,10 @@ cases se déduit des virgules.
 | # | Ce qui a été fait |
 |---|---|
 | 1 | **Tampon propre au mot-clé**, `dw_buf`, **48 octets** — et non le réemploi de `xf_buf`. Les 48 octets économisés n'auraient pas suffi à faire tenir le bloc (il manquait 57 octets), et lier `DWGL` au filtre de `XCONSOLE` pour rien n'avait pas de sens |
-| 2 | **Non** : `DWGL` ne trace pas le marqueur graphique. C'est un indicateur à poste fixe, pas un curseur (§3) ; un programme le pose par `GCURSOR`/`GPRINT` s'il le veut |
+| 2 | **Non, et la mesure confirme le choix** : `DWGL` ne trace pas le marqueur. Une ligne de BASIC le fait — `GCURSOR (1,25):GPRINT "0A1B1B0A"`, arithmétique lue dans la ROM (§3) — quand l'option dans le mot-clé coûtait ~90 octets pour 61 libres |
 | 3 | **Sans objet** : `DWGL` refuse elle-même avant d'appeler (erreur 33), là où la ROM perdait les cases en silence. L'essai « `*MNU` avec six libellés » reste à faire pour la curiosité, plus pour la sûreté |
-| 4 et 5 | Toujours ouverts : à voir à l'essai (`essais/DWGLTEST.BAS`) |
+| 4 | ✅ **Clos** : la `58h` ne déplace pas le curseur du BASIC — le `PRINT` qui suit tombe où il doit (essai du 2026-10-14) |
+| 5 | ✅ **Clos** : le texte programmé des touches ne gêne pas, puisque `INKEY$ &1` ne le voit jamais. Mesuré le 2026-10-15 : la touche haut-bas y rend `1Eh`, les `PF` `F1h`-`F5h` ; `INPUT$`, lui, rendrait le texte |
 
 ### 8.3 Ce que l'écriture a appris
 
@@ -320,6 +360,27 @@ J.-F. Albouy. Les six écrans sont conformes, sans exception :
 | 4 | `[UN    ][DEUX  ](MILIEU)(DROITE)` | ✅ **bit 7** : le second appel garde les cases du premier ; ✅ **bit 0** : parenthèses. Deux barres sur une même ligne |
 | 5 | `33 33 33 90 90 33 10` | ✅ les **sept refus**, dans l'ordre et au code près |
 | 6 | `(UUENC )(RENUM )(HIST  )(REGIS )(RETOUR)` puis `CHOIX 1` | ✅ le menu à dix choix : `INKEY$ &1`, drapeau de page, `PF5` bascule, indice `N+5*P` |
+
+### Les touches, mesurées le 2026-10-15
+
+✅ **J.-F. Albouy, `KEYCODE.BAS` sur PC-E500S** — la touche qui tourne les pages du MENU, celle du
+double pictogramme sous `TITLE` :
+
+| | `INKEY$ &1` | `INPUT$ (1)` |
+|---|---|---|
+| la touche **haut-bas** du MENU | **`1Eh`** | **`00h`** puis **`0Eh`** |
+| l'autre touche à double flèche (large, à gauche de `PF1`) | — | `00h` puis `8Ah` |
+
+✅ **Les deux voies concordent avec les tables, et la prédiction était juste** : le code matriciel
+est `0Eh`, la table d'`INKEY$` (`0F9C5Dh`) y porte `1Eh`, et la table à deux octets du pilote
+(`030806h`, celle d'`INPUT$`) y porte `0Eh` derrière le préfixe `00h` — exactement ce que la boucle
+du MENU teste. La seconde touche a le code matriciel **`5Ah`** (`030806h` y porte `8Ah`) : ce n'est
+pas celle du MENU.
+
+**Conséquence, et elle est bonne** : `INKEY$ &1` suffit à un menu complet — `F1h`-`F5h` pour les
+cinq choix, `1Eh` pour tourner la page. Pas besoin des deux fonctions. Un menu à **dix choix réels**
+s'écrit donc comme celui de la machine, sans sacrifier `PF5` à « SUITE » : c'est ce que fait
+désormais `essais/DWGLTEST.BAS`.
 
 ✅ **Point ouvert n° 4 clos par la même image** : la `58h` **ne déplace pas le curseur du
 BASIC**. Aux étapes 3 et 4, le `PRINT` qui suit l'appel écrit en ligne 1, exactement où il

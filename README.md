@@ -1,6 +1,6 @@
 # BASEXT — étendre le BASIC du PC-E500S
 
-*Rédigé le 2026-09-15 — mis à jour le 2026-10-14*
+*Rédigé le 2026-09-15 — mis à jour le 2026-10-15*
 
 Ajouter à l'interpréteur BASIC du **PC-E500S** ses propres **instructions** et **fonctions**, qui
 s'emploient ensuite exactement comme celles de la ROM : `PRINT LPEEK &BF100`, `A$=TRIM$ (B$)`,
@@ -92,7 +92,8 @@ BASEXT/
 │   └── pce500.inc             constantes systeme, GENEREES (ne pas editer a la main)
 ├── essais/
 │   ├── BEXTTEST.BAS           les 15 mots-cles (XCONSOLE et XCLS le 2026-09-16, DWGL le 2026-10-14)
-│   ├── DWGLTEST.BAS           DWGL : trace, les deux bits du tag, les refus, un menu a dix choix
+│   ├── DWGLTEST.BAS           DWGL : trace, les deux bits du tag, le marqueur, les refus,
+│   │                          et un menu A DIX CHOIX (PF1-PF5 + la touche haut-bas)
 │   ├── DWGLEMU.py             DWGL execute dans un interpreteur SC62015 (PC, pas la machine)
 │   ├── XCONTEST.BAS           XCONSOLE et XCLS : trois fenetres, puis les cinq refus
 │   ├── XSCROLL.BAS            defilement confine : ligne haute figee, puis haut et bas figes
