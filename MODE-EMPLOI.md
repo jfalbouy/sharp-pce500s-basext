@@ -1063,10 +1063,9 @@ python C:\Claude\BASEXT\outils\bsa_basext.py --table                # la table s
 en octet 4.
 
 ✅ **`Sharp Basic Converter` connaît les extensions depuis le 2026-10-15** : son option
-`-k`/`--keywords <table.csv>` ajoute aux 168 mots-clés de la ROM ceux d'un module. Elle est sur la
-branche `mots-cles-extension`, publiée dans
-`C:\Claude\Sharp Basic Converter - extensions\Publish\sharpbasic.exe` (pas encore fusionnée
-dans `main`). On peut l'appeler directement :
+`-k`/`--keywords <table.csv>` ajoute aux 168 mots-clés de la ROM ceux d'un module. Elle est dans
+`main` (fusion `c62ad64`), publiée dans `C:\sharp\SharpBasicConverter\sharpbasic.exe` et dans
+`C:\Claude\Sharp Basic Converter\Publish\`. On peut l'appeler directement :
 
 ```powershell
 sharpbasic compress   essais\DWGLTEST.BAS -k donnees\tokens-basext.csv --input-encoding cp437
@@ -1087,8 +1086,8 @@ sharpbasic decompress essais\DWGLTEST.BSA -k donnees\tokens-basext.csv --output-
 
 Il annonce les mots-clés **effectivement tokenisés**, comptés dans le `.BSA` : un nom cité dans
 un `REM` (« LE MODELE » ne contient pas `MOD`) n'y figure pas, et ne doit pas y figurer. Il
-cherche l'exécutable dans la variable `SHARPBASIC`, puis dans la branche, puis dans `main` et le
-dossier d'usage, et retient le premier qui connaît `--keywords`.
+cherche l'exécutable dans la variable `SHARPBASIC`, puis dans le dossier d'usage, puis dans le
+`Publish` du convertisseur, et retient le premier qui connaît `--keywords`.
 
 **Le convertisseur reproduit les règles de la machine**, et refuse une table qui les violerait,
 toutes fautes listées ensemble :
@@ -1213,7 +1212,7 @@ Tous ont coûté au moins une séance.
 | 7 | Les tokens `1Eh`, `1Fh`, `FEh`, `FFh` | essai (§2.3) |
 | 8 | ✅ **Clos** — **quatre** arguments, trois nombres et une chaîne, écrits le 2026-10-14 pour `DWGL colonne,ligne,tag,chaine$` (§8.5) : chaque nombre par un **`eval` + `dec2bin`** encapsulés, la chaîne par un `eval` final, et la **ponctuation lue à la main** entre chacun. Il n'a pas fallu lire `MID$` : la difficulté supposée n'existe pas, dès lors que `BP` est rendu **en absolu** après chaque argument. ✅ Éprouvé sur PC-E500S le 2026-10-14 (`essais/DWGLTEST.BAS`) | — |
 | 9 | Le cadre de `STR$` (`0FD6CDh`) : `0FC13Ch` n'a pas été lu, le bilan de `BP` n'est donc pas établi pour ce chemin | lire `0FC13Ch` |
-| 10 | ✅ **Clos le 2026-10-15 — la réponse est désormais oui.** Le matin, la réponse était non : `Sharp Basic Converter` tokenisait les 168 mots-clés de la ROM **et eux seuls**, et laissait `DWGL`, `XCONSOLE`, `XCLS`, `SREPT$` **en clair** dans le `.BSA`. La parade était alors les doublures de `bsa_basext.py`. Le même jour, le convertisseur a reçu l'option **`-k`/`--keywords <table.csv>`** (branche `mots-cles-extension`). Elle reproduit à l'octet, dans les deux sens, le `BEXTTEST.BSA` enregistré par la machine. `bsa_basext.py` lui délègue désormais le travail et écrit la table `donnees/tokens-basext.csv` (§9.4) | fusionner la branche dans `main` du convertisseur |
+| 10 | ✅ **Clos le 2026-10-15 — la réponse est désormais oui.** Le matin, la réponse était non : `Sharp Basic Converter` tokenisait les 168 mots-clés de la ROM **et eux seuls**, et laissait `DWGL`, `XCONSOLE`, `XCLS`, `SREPT$` **en clair** dans le `.BSA`. La parade était alors les doublures de `bsa_basext.py`. Le même jour, le convertisseur a reçu l'option **`-k`/`--keywords <table.csv>`** (branche `mots-cles-extension`, **fusionnée dans `main` et publiée le soir même**). Elle reproduit à l'octet, dans les deux sens, le `BEXTTEST.BSA` enregistré par la machine. `bsa_basext.py` lui délègue désormais le travail et écrit la table `donnees/tokens-basext.csv` (§9.4) | — |
 
 ---
 

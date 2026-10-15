@@ -7,7 +7,8 @@ r"""bsa_basext.py -- .BAS <-> .BSA pour un programme qui emploie les mots-cles d
 
 ✅ DEPUIS LE 2026-10-15, « Sharp Basic Converter » CONNAIT LES EXTENSIONS : son option
    -k/--keywords <table.csv> ajoute aux 168 mots-cles de la ROM ceux d'un module
-   (branche « mots-cles-extension », Publish\sharpbasic.exe). Verifie contre
+   (dans « main » depuis la fusion c62ad64, publie dans C:\sharp\SharpBasicConverter).
+   Verifie contre
    BEXTTEST.BSA, enregistre par le PC-E500S BASEXT installe : identique A L'OCTET
    dans les deux sens. Cet outil n'est donc plus qu'un AIGUILLAGE :
 
@@ -38,12 +39,11 @@ ASM = os.path.join(ICI, "..", "src", "BASEXT.ASM")
 TABLE = os.path.normpath(os.path.join(ICI, "..", "donnees", "tokens-basext.csv"))
 
 # L'executable : la variable SHARPBASIC s'il y en a une, sinon le premier de ces
-# chemins qui connait --keywords. L'executable de « main » ne le connait pas tant
-# que la branche n'y est pas fusionnee ; il est essaye, puis ecarte.
+# chemins qui connait --keywords (un executable anterieur au 2026-10-15 l'ignore ;
+# il est essaye, puis ecarte).
 CANDIDATS = [
-    r"C:\Claude\Sharp Basic Converter - extensions\Publish\sharpbasic.exe",
-    r"C:\Claude\Sharp Basic Converter\Publish\sharpbasic.exe",
     r"C:\sharp\SharpBasicConverter\sharpbasic.exe",
+    r"C:\Claude\Sharp Basic Converter\Publish\sharpbasic.exe",
 ]
 
 
@@ -98,8 +98,8 @@ def trouver_sharpbasic():
             return exe
     erreur("aucun sharpbasic ne connait --keywords. Chemins essayes :\n   "
            + "\n   ".join(candidats)
-           + "\nPublier la branche « mots-cles-extension » de Sharp Basic Converter"
-             " (deploy.ps1 -NoCopy), ou designer l'executable par la variable SHARPBASIC.")
+           + "\nRepublier Sharp Basic Converter (deploy.ps1, branche main),"
+             " ou designer l'executable par la variable SHARPBASIC.")
 
 
 def sharpbasic(exe, *args):
