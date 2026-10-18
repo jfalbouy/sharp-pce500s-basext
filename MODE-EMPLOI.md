@@ -1,6 +1,6 @@
 # Créer une instruction BASIC — mode d'emploi et référentiel
 
-*Rédigé le 2026-09-15 — mis à jour le 2026-10-15*
+*Rédigé le 2026-09-15 — mis à jour le 2026-10-18*
 
 **PC-E500S, ROM 8.3.** Comment greffer ses propres mots-clés sur l'interpréteur : les
 instructions standard et leur mécanique, la procédure, les adresses de la ROM à employer, et la
@@ -1114,6 +1114,7 @@ mots-clés ressortent en octets bruts (`70 ■╙0,3,0,"..."`). `sharpbasic deco
 | `BEXTTEST.BAS` → `.BSA` | **identique à l'octet** (1440) au `.BSA` que le PC-E500S a écrit lui-même, les quinze mots-clés tokenisés, `DWGL` compris |
 | le `.BSA` **de la machine** → `.BAS` | **identique à l'octet** à `essais/BEXTTEST.BAS` |
 | `DRVTEST.BAS` (aucun mot-clé de BASEXT) → `.BSA` | identique à l'octet au `.BSA` de la machine : l'extension ne gêne pas les programmes ordinaires |
+| **`DWGLTEST.BSA` chargé et exécuté sur le Sharp** | ✅ **2026-10-18** — le fichier produit ici tourne sur la machine, `DWGL` compris. Les trois contrôles précédents portaient sur des octets ; celui-ci porte sur le programme |
 | `DWGLTEST.BAS` → `.BSA` | identique à l'octet à `essais/DWGLTEST.BSA`, produit par l'ancienne méthode |
 
 ✅ **Et la machine sait relire ses propres noms** : un `SAVE` texte depuis le Sharp rend

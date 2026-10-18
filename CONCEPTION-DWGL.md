@@ -438,6 +438,11 @@ texte s'écrit au-dessus, et `XCLS` n'y touche pas.
 réservée. ✅ La 0.3 du pilote est allée jusqu'au bout le même jour : `DRVTEST.BAS`, `BEXTTEST.BAS` en
 `*** 15/15 OK ***`, et la désinstallation `CALL &BF000 "-U"` puis `SET`/`KILL`.
 
+✅ **Et le 2026-10-18, `essais/DWGLTEST.BSA` — le fichier tokenisé produit sur le PC par
+`outils/bsa_basext.py` — a été chargé et exécuté sur le Sharp sans réserve.** La chaîne est donc
+complète de bout en bout : source `.ASM` unique → pilote résident → mot-clé → programme d'essai
+tokenisé sur le PC → machine.
+
 ---
 
 ## 9. Sources
