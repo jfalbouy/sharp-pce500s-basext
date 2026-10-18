@@ -199,11 +199,47 @@ les deux premières lignes de points du crochet (24 et 25).
 *sa* ligne, le marqueur de la ligne au-dessus survit. Au changement de page, il suffit de retracer
 la barre : inutile de reposer le marqueur.
 
-📖 **Ce qui reste à établir** : la ROM, elle, pose son marqueur **après** la barre sans rien
-effacer — avec `dotsop` = **1**. Le carnet annote ce mode « éteindre », ce que la mesure contredit
-puisque c'est le mode **0** qui efface. Les trois modes de `dotsop` restent donc à lire dans la
-commande `4Ah` elle-même. ⚠️ Sans conséquence ici : `GPRINT` force `0` à chaque appel, on ne peut
-pas lui demander autre chose depuis le BASIC.
+✅ **Les trois modes de `dotsop`, lus dans la commande `4Ah` elle-même (2026-10-18).** La table
+des commandes du pilote d'écran est en `0F2224h`, indexée par `commande − 3Fh` sur deux octets :
+`4Ah` mène à **`0F80F9h`**. Le mode y est appliqué par un combinateur de dix instructions,
+`0F81EFh` :
+
+```asm
+        mv   a,[dotsop]
+        cmp  a,001H          ; le mode ; mv ne touche pas aux indicateurs
+        mv   a,(cl)          ; A = l'octet DEJA A L'ECRAN
+        jrc  LOC_F8200       ; dotsop = 0
+        jrz  LOC_F8203       ; dotsop = 1
+        xor  a,(0DEH)        ; dotsop >= 2 : OU EXCLUSIF
+        ret
+LOC_F8200:
+        and  a,(di)          ; masque : ne garde que ce qui est HORS fenetre
+LOC_F8203:
+        or   a,(0DEH)        ; puis ajoute les points du motif
+        ret
+```
+
+| `dotsop` | opération | effet |
+|---|---|---|
+| **0** | `(écran ET masque) OU motif` | **remplacement** — les points à **0 du motif EFFACENT** |
+| **1** | `écran OU motif` | **ajout** — n'efface jamais rien |
+| **≥ 2** | `écran OU EXCLUSIF motif` | **inversion** |
+
+✅ **Et tout se referme** : `GPRINT` force le mode **0** (`0FD350h`), d'où l'effacement mesuré des
+deux lignes du crochet ; la ROM emploie le mode **1** pour son marqueur (`0E22BBh`), d'où son droit
+de le poser **après** la barre sans rien abîmer. Le code prédit la mesure, et la mesure confirme le
+code.
+
+⚠️ **Le carnet reste à corriger à sa source** : `pce500.inc` annote `4Ah` « 0 allumer, 1 éteindre,
+2 inverser ». « 1 éteindre » est faux — c'est un OU, il ne peut rien éteindre. L'annotation vient
+vraisemblablement de la commande **`4Ch`** (`display_dot_write`, un point isolé), dont le manuel
+décrit le paramètre `A` ainsi ; or `4Ch` **range précisément `A` dans `dotsop`** (`0F7E14h`), donc
+les deux commandes partagent la variable. 📖 Pour un point isolé, « allumer » coïncide avec le
+remplacement, mais « éteindre » ne coïncide pas avec le OU : le chemin du point isolé prépare
+peut-être d'autres opérandes, ce que je n'ai pas suivi.
+
+⚠️ Sans conséquence pour un programme BASIC : `GPRINT` force le mode `0` à chaque appel, on ne peut
+pas lui en demander un autre. La règle reste donc : **tracer le marqueur avant la barre**.
 
 ⛔ **Et c'est pourquoi le marqueur N'EST PAS dans `DWGL`.** Il y tenait en option (`tag` bit 1, les
 bits 1 à 6 étant ignorés par la ROM), mais le code pèse **~90 octets** — quatre appels `4Ah`, le
