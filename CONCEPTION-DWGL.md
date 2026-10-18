@@ -1,6 +1,6 @@
 # DWGL — une instruction BASIC pour la barre de menu (IOCS 58h)
 
-*Rédigé le 2026-10-14 — mis à jour le 2026-10-15*
+*Rédigé le 2026-10-14 — mis à jour le 2026-10-18*
 
 Étude de faisabilité d'un mot-clé BASEXT qui trace la **barre de cases** du Sharp — celle de la
 touche `MENU` et des libellés de touches de fonction — depuis un programme BASIC, sans `POKE` ni
@@ -134,10 +134,10 @@ sélection. La même routine sert à deux autres écrans système (`0E1142h`, `0
 devinée :
 
 ```basic
-GCURSOR (1,23):GPRINT "0A1B1B0A"
+GCURSOR (1,25):GPRINT "0A1B1B0A"      ' AVANT de tracer la barre
 ```
 
-(la ROM, elle, est à **25** ; le pourquoi du 23 est deux paragraphes plus bas)
+**L'ordre compte**, et c'est le seul piège : voir deux paragraphes plus bas.
 
 | Ce qu'il fallait savoir | Où c'est lu |
 |---|---|
@@ -165,10 +165,8 @@ bit de poids faible est bien le point du **haut** —, puis **une seule ligne de
 (23) avant le haut du crochet (24). ⚠️ **Ce voisinage serré n'est pas un défaut de notre ligne :
 c'est l'espacement de la machine elle-même.**
 
-⛔ **Et le motif n'est pas « décalé de deux points », question posée après l'essai sur machine :
-il est déjà calé en haut de l'octet.** Le dessin tient sur les points **0 à 4** de la colonne de
-huit, les points 5, 6 et 7 étant vides — on ne peut donc pas le remonter dans le motif, seule
-l'ordonnée le déplace :
+⛔ **Le motif n'est pas « décalé de deux points » : il est déjà calé en haut de l'octet.** Le
+dessin tient sur les points **0 à 4** de la colonne de huit, les points 5, 6 et 7 étant vides :
 
 ```
 0Ah 1Bh 1Bh 0Ah        point 0 : .##.      point 4 : .##.
@@ -177,16 +175,35 @@ l'ordonnée le déplace :
                        point 3 : ####      point 7 : ....
 ```
 
-| `GCURSOR` | fenêtre | dessin | points libres avant la barre (24) | |
-|---|---|---|---|---|
-| `(1,25)` | 18 à 25 | 18 à 22 | **1** | la ROM, et c'est trop serré à l'œil |
-| `(1,24)` | 17 à 24 | 17 à 21 | 2 | |
-| `(1,23)` | 16 à 23 | 16 à 20 | **3** | ✅ **retenu** le 2026-10-15, après essai sur le Sharp |
+⛔ **Et j'ai tiré de là une conclusion fausse, que la machine a démentie.** Voyant le marqueur
+« empiéter » sur le crochet, j'ai cru à un espacement trop serré de la ROM et retenu `23`. ✅ **La
+mesure de J.-F. Albouy, le 2026-10-18, dit autre chose : `25` est la bonne valeur, et le défaut
+venait de l'ORDRE des instructions.**
 
-✅ **Valeur retenue : `GCURSOR (1,23)`**, soit en général `GCURSOR (6 × colonne + 1, 8 × ligne − 1)`.
-Le dessin reste entièrement dans la ligne au-dessus de la barre. On s'écarte de deux points de la
-ROM **en connaissance de cause** : son propre marqueur frôle le crochet, et ce qui passe inaperçu
-dans l'écran `MENU` se voit dans un menu que l'on vient d'écrire.
+**La cause**, et elle est dans les trois points vides du bas : `GPRINT` met `dotsop` à **0**
+(`and [dotsop],000h` en `0FD350h`) et écrit la colonne de huit points **entière, bits à zéro
+compris** — il **remplace**, il n'ajoute pas. Tracé *après* la barre, le marqueur **efface** donc
+les deux premières lignes de points du crochet (24 et 25).
+
+✅ **Vérifié dans les clichés**, colonne du crochet seule (x 0-22 px, trois captures du même
+écran) :
+
+| | lignes de pixels du crochet |
+|---|---|
+| écran `MENU` de la ROM | 138, 142, 146, 150, 154, 158, 162 |
+| marqueur tracé **après** la barre | **—, —,** 146, 150, 154, 158, 162 |
+| marqueur tracé **avant** la barre | 138, 142, 146, 150, 154, 158, 162 — **identique à la ROM** |
+
+✅ **La règle, donc** : `GCURSOR (6 × colonne + 1, 8 × ligne + 1)` — soit `(1,25)` pour la ligne 3 —
+**et le tracer AVANT la barre**. `DWGL` refait ensuite la ligne entière, et comme il n'efface que
+*sa* ligne, le marqueur de la ligne au-dessus survit. Au changement de page, il suffit de retracer
+la barre : inutile de reposer le marqueur.
+
+📖 **Ce qui reste à établir** : la ROM, elle, pose son marqueur **après** la barre sans rien
+effacer — avec `dotsop` = **1**. Le carnet annote ce mode « éteindre », ce que la mesure contredit
+puisque c'est le mode **0** qui efface. Les trois modes de `dotsop` restent donc à lire dans la
+commande `4Ah` elle-même. ⚠️ Sans conséquence ici : `GPRINT` force `0` à chaque appel, on ne peut
+pas lui demander autre chose depuis le BASIC.
 
 ⛔ **Et c'est pourquoi le marqueur N'EST PAS dans `DWGL`.** Il y tenait en option (`tag` bit 1, les
 bits 1 à 6 étant ignorés par la ROM), mais le code pèse **~90 octets** — quatre appels `4Ah`, le
